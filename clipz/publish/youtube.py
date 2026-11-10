@@ -11,7 +11,7 @@ SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 NAME = "youtube"
 
 
-def metadata(clip: Clip, hashtags: list[str]) -> dict:
+def metadata(clip: Clip, hashtags: list[str], gaming: bool = True) -> dict:
     tags = " ".join(f"#{t.lstrip('#')}" for t in ["Shorts", *hashtags])
     title = clip.title.strip()
     room = 100 - len(" #Shorts")  # YouTube titles max out at 100 chars
@@ -21,7 +21,7 @@ def metadata(clip: Clip, hashtags: list[str]) -> dict:
         "title": f"{title} #Shorts",
         "description": f"Clip credit: {clip.credit}\nOriginal: {clip.url}\n\n{tags}",
         "tags": [t.lstrip("#") for t in hashtags],
-        "categoryId": "20",  # Gaming
+        "categoryId": "20" if gaming else "24",  # Gaming / Entertainment
     }
 
 
@@ -82,7 +82,7 @@ def upload(cfg: Config, clip: Clip) -> str:
     from googleapiclient.http import MediaFileUpload
 
     body = {
-        "snippet": metadata(clip, cfg.render.get("hashtags", [])),
+        "snippet": metadata(clip, cfg.hashtags_for(clip), cfg.is_gaming(clip)),
         "status": {
             "privacyStatus": cfg.youtube_upload.get("privacy", "private"),
             "selfDeclaredMadeForKids": False,

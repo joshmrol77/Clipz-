@@ -266,14 +266,20 @@ function renderStreamers() {
   const platform = h("select", {}, ["twitch", "kick", "youtube"].map(p => h("option", { value: p }, p[0].toUpperCase() + p.slice(1))));
   const channel = h("input", { type: "text", placeholder: "Channel name, e.g. some_streamer or @SomeChannel", on: { input: () => dirty = true } });
   const ok = h("input", { type: "checkbox" });
-  const add = () => api("POST", "/api/creators", { platform: platform.value, channel: channel.value, permission: ok.checked });
+  const game = S.settings.game;
+  const what = h("select", {}, game ? h("option", { value: "" }, `Only ${game} clips`) : null, h("option", { value: "all" }, "All their clips (any category)"));
+  const tags = h("input", { type: "text", placeholder: "Hashtags for this streamer (optional), e.g. togi, irl", on: { input: () => dirty = true } });
+  const add = () => api("POST", "/api/creators", { platform: platform.value, channel: channel.value, permission: ok.checked,
+    all_content: what.value === "all", hashtags: tags.value.split(",").map(s => s.trim()).filter(Boolean) });
   $("streamers").replaceChildren(h("div", { className: "panel" },
     h("h2", {}, "Streamers to clip"),
     h("p", { className: "muted" }, "Clipz only looks at channels on this list. Add creators who run a clipping program or have told you it's OK - posting someone's footage without permission gets channels struck."),
-    h("div", { className: "row" }, platform, channel, h("button", { className: "primary", on: { click: add } }, "Add")),
+    h("div", { className: "row" }, platform, channel),
+    h("div", { className: "row", style: "margin-top:10px" }, what, tags, h("button", { className: "primary", on: { click: add } }, "Add")),
     h("label", { className: "check muted", style: "margin-top:10px" }, ok, "I have this creator's permission to post their clips"),
     h("ul", { className: "list" }, S.creators.length ? S.creators.map(c =>
-      h("li", {}, h("span", {}, c.channel), h("span", { className: "badge" }, c.platform),
+      h("li", {}, h("span", {}, c.channel, c.hashtags.length ? h("span", { className: "muted" }, "  #" + c.hashtags.join(" #")) : null),
+        h("span", { className: "badge" }, c.all_content || !game ? "All clips" : game + " only"), h("span", { className: "badge" }, c.platform),
         h("button", { className: "ghost-bad", on: { click: () => api("DELETE", "/api/creators", c) } }, "Remove")))
       : h("li", { className: "muted" }, "No streamers yet."))));
 }
@@ -338,7 +344,7 @@ function renderSettings() {
     h("div", { className: "panel" },
       h("h2", {}, "What to look for"),
       h("div", { className: "row", style: "margin-top:10px" },
-        field("Game (Twitch category name)", f.game), field("YouTube title must contain one of", f.keywords), field("Hashtags on posts", f.hashtags)),
+        field("Game (Twitch category name; blank = any)", f.game), field("YouTube title must contain one of", f.keywords), field("Hashtags on posts", f.hashtags)),
       h("div", { className: "row", style: "margin-top:10px" },
         field("Only clips newer than (hours)", f.lookback_hours), field("Minimum views", f.min_views),
         field("Clips to edit per search", f.max_clips_per_run), field("Max clip length (seconds)", f.max_duration)),

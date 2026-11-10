@@ -104,7 +104,7 @@ def upload(cfg: Config, clip: Clip) -> str:
     size = path.stat().st_size
     chunk_size, count = chunk_plan(size)
     r = requests.post(f"{API}/post/publish/video/init/", headers=headers, timeout=60, json={
-        "post_info": {"title": caption(clip, cfg.render.get("hashtags", [])),
+        "post_info": {"title": caption(clip, cfg.hashtags_for(clip)),
                       "privacy_level": cfg.tiktok.get("privacy", "SELF_ONLY")},
         "source_info": {"source": "FILE_UPLOAD", "video_size": size,
                         "chunk_size": chunk_size, "total_chunk_count": count},

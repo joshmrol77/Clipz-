@@ -29,7 +29,7 @@ def discover(cfg: Config, creators: list[Creator]) -> list[Clip]:
             listing = ydl.extract_info(_channel_url(c.channel) + "/videos", download=False)
         for entry in listing.get("entries") or []:
             title = entry.get("title") or ""
-            if cfg.keywords and not any(k.lower() in title.lower() for k in cfg.keywords):
+            if cfg.keywords and not c.all_content and not any(k.lower() in title.lower() for k in cfg.keywords):
                 continue
             with yt_dlp.YoutubeDL(quiet) as ydl:
                 info = ydl.extract_info(entry["url"], download=False)

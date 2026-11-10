@@ -41,7 +41,8 @@ def test_add_and_remove_streamer_requires_permission(env):
     assert post(client, "/api/creators", {"platform": "twitch", "channel": "abc", "permission": True}).status_code == 200
     assert post(client, "/api/creators", {"platform": "twitch", "channel": "ABC", "permission": True}).status_code == 400
     creators = client.get("/api/state").get_json()["creators"]
-    assert creators == [{"platform": "twitch", "channel": "abc", "credit": "twitch.tv/abc"}]
+    assert creators == [{"platform": "twitch", "channel": "abc", "credit": "twitch.tv/abc",
+                         "all_content": False, "hashtags": []}]
     post(client, "/api/creators", creators[0], method="delete")
     assert client.get("/api/state").get_json()["creators"] == []
 
@@ -131,3 +132,29 @@ def test_layout_change_validates_and_upload_is_origin_checked(env):
     assert upload("../../game.mp4", "http://127.0.0.1:8777").status_code == 200
     assert client.get("/api/state").get_json()["backgrounds"] == ["game.mp4"]
     assert (tmp / "data" / "backgrounds" / "game.mp4").exists()
+
+
+def test_all_content_streamers_skip_the_game_filter_and_get_their_own_tags(monkeypatch):
+    from datetime import datetime, timezone
+    from clipz.config import Config, Creator
+    from clipz.publish import youtube
+    from clipz.sources import twitch
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    def fake_get(s, path, **params):
+        if path == "games":
+            return [{"id": "GTA"}]
+        if path == "users":
+            return [{"login": "gamer", "id": "1"}, {"login": "irl", "id": "2"}]
+        return [{"id": f"{params['broadcaster_id']}-{g}", "game_id": g, "view_count": 999, "title": "t",
+                 "url": "u", "created_at": now, "duration": 20} for g in ("GTA", "IRL")]
+    monkeypatch.setattr(twitch, "_session", lambda cfg: None)
+    monkeypatch.setattr(twitch, "_get", fake_get)
+    cfg = Config(creators=[Creator("twitch", "gamer"), Creator("twitch", "irl", all_content=True, hashtags=["#togi"])],
+                 render={"hashtags": ["GTA6"]})
+    clips = {c.id: c for c in twitch.discover(cfg, cfg.creators)}
+    assert sorted(clips) == ["twitch:1-GTA", "twitch:2-GTA", "twitch:2-IRL"]
+    irl, game = clips["twitch:2-IRL"], clips["twitch:1-GTA"]
+    assert cfg.hashtags_for(irl) == ["togi"] and cfg.hashtags_for(game) == ["GTA6"]
+    assert youtube.metadata(irl, cfg.hashtags_for(irl), cfg.is_gaming(irl))["categoryId"] == "24"
+    assert youtube.metadata(game, cfg.hashtags_for(game), cfg.is_gaming(game))["categoryId"] == "20"

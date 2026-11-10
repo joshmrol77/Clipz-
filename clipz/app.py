@@ -122,7 +122,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
         if not body.get("permission"):
             return jsonify(error="Tick the box to confirm you're allowed to clip this creator."), 400
         try:
-            new = Creator(body.get("platform", ""), body.get("channel", ""), body.get("credit", ""))
+            new = Creator(body.get("platform", ""), body.get("channel", ""), body.get("credit", ""),
+                          bool(body.get("all_content")), list(body.get("hashtags") or []))
         except ValueError as e:
             return jsonify(error=str(e)), 400
         c = cfg()

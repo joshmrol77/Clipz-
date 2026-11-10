@@ -32,7 +32,7 @@ def discover(cfg: Config, creators: list[Creator]) -> list[Clip]:
             views = d.get("view_count") or d.get("views") or 0
             created = d.get("created_at", "")
             category = (d.get("category") or {}).get("name", "")
-            if cfg.game and category and category.lower() != cfg.game.lower():
+            if cfg.game and not c.all_content and category and category.lower() != cfg.game.lower():
                 continue
             if views < cfg.min_views or not created or age_hours(created, now) > cfg.lookback_hours:
                 continue

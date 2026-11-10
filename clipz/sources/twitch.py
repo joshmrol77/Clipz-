@@ -36,7 +36,7 @@ def _get(s: requests.Session, path: str, **params) -> list[dict]:
 def discover(cfg: Config, creators: list[Creator]) -> list[Clip]:
     s = _session(cfg)
     game_id = None
-    if cfg.game:
+    if cfg.game and not all(c.all_content for c in creators):
         games = _get(s, "games", name=cfg.game)
         if not games:
             raise RuntimeError(f"Twitch has no category named {cfg.game!r}")
@@ -56,7 +56,7 @@ def discover(cfg: Config, creators: list[Creator]) -> list[Clip]:
         # Helix returns clips sorted by view count, so the first page is the top 100.
         for d in _get(s, "clips", broadcaster_id=uid, started_at=started,
                       ended_at=now.strftime("%Y-%m-%dT%H:%M:%SZ"), first=100):
-            if game_id and d["game_id"] != game_id:
+            if game_id and not c.all_content and d["game_id"] != game_id:
                 continue
             if d["view_count"] < cfg.min_views:
                 continue

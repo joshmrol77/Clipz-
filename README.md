@@ -21,7 +21,7 @@ Your browser opens at <http://127.0.0.1:8777>. Everything is done from four tabs
 
 | Tab | What you do there |
 |---|---|
-| **Streamers** | Add or remove the channels Clipz watches. |
+| **Streamers** | Add or remove the channels Clipz watches. For each one choose "only the game" or "all their clips" (IRL, chatting, anything), and optionally give them their own hashtags. |
 | **Settings** | Paste your Twitch keys, choose the game, turn on autopilot. |
 | **Accounts** | Connect YouTube and TikTok. |
 | **Clips** | Watch each edited clip, then Approve or Reject it. |

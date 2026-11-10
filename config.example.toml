@@ -19,6 +19,12 @@ channel = "some_streamer"         # twitch login, kick slug, or youtube channel 
 credit = "twitch.tv/some_streamer"  # shown on the video and in the description
 
 # [[creators]]
+# platform = "kick"
+# channel = "some_irl_streamer"
+# all_content = true              # clip everything they stream, not just the game above
+# hashtags = ["irl", "funny"]     # used on their posts instead of the global hashtags
+
+# [[creators]]
 # platform = "youtube"
 # channel = "@SomeChannel"
 # credit = "youtube.com/@SomeChannel"

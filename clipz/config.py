@@ -21,9 +21,12 @@ class Creator:
     platform: str
     channel: str
     credit: str = ""
+    all_content: bool = False     # True = clip everything they stream, not just the configured game
+    hashtags: list[str] = field(default_factory=list)   # empty = use the global hashtags
 
     def __post_init__(self):
         self.channel = self.channel.strip()
+        self.hashtags = [h.strip().lstrip("#") for h in self.hashtags if h.strip()]
         if self.platform not in PLATFORMS:
             raise ValueError(f"platform must be one of {PLATFORMS}, got {self.platform!r}")
         if not self.channel:
@@ -52,6 +55,20 @@ class Config:
     render: dict = field(default_factory=dict)
     youtube_upload: dict = field(default_factory=dict)
     tiktok: dict = field(default_factory=dict)
+
+    def creator_for(self, clip) -> Creator | None:
+        for c in self.creators:
+            if c.platform == clip.platform and c.channel == clip.creator:
+                return c
+        return None
+
+    def hashtags_for(self, clip) -> list[str]:
+        creator = self.creator_for(clip)
+        return (creator.hashtags if creator and creator.hashtags else self.render.get("hashtags", []))
+
+    def is_gaming(self, clip) -> bool:
+        creator = self.creator_for(clip)
+        return bool(self.game) and not (creator and creator.all_content)
 
     @property
     def db_path(self) -> Path:
