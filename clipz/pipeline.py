@@ -1,6 +1,8 @@
 """The steps shared by the command line and the app."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from . import db, download as dl, publish, render as rn, sources
 from .config import Config
 
@@ -15,17 +17,35 @@ def find_and_render(cfg: Config, con, log=print) -> None:
     process(cfg, con, db.by_status(con, "discovered", cfg.max_clips_per_run), log)
 
 
+def backgrounds(cfg: Config) -> list[str]:
+    """Gameplay videos available for the split layout."""
+    folder = cfg.data_dir / "backgrounds"
+    folder.mkdir(parents=True, exist_ok=True)
+    return sorted(p.name for p in folder.iterdir() if p.suffix.lower() in rn.BACKGROUND_TYPES)
+
+
 def process(cfg: Config, con, clips, log=print) -> None:
+    """Download (if we don't already have the footage) and render each clip in its layout."""
     for clip in clips:
         log(f"[{clip.id}] {clip.title!r} ({clip.views} views)")
         try:
-            src = dl.download(clip, cfg.data_dir / "raw")
-            db.update(con, clip.id, status="downloaded", src_path=str(src))
+            src = Path(clip.src_path) if clip.src_path else None
+            if not src or not src.exists():
+                src = dl.download(clip, cfg.data_dir / "raw")
+                db.update(con, clip.id, status="downloaded", src_path=str(src))
+            layout = clip.layout or cfg.render.get("layout", "framed")
+            background = None
+            if layout == "split":
+                name = clip.background or cfg.render.get("background", "")
+                available = backgrounds(cfg)
+                if name not in available:
+                    name = available[0] if available else ""
+                background = cfg.data_dir / "backgrounds" / name if name else None
             out = rn.render(src, cfg.data_dir / "out" / f"{src.stem}.mp4", clip.title, clip.credit,
-                            cfg.max_duration, cfg.render.get("font", ""))
+                            cfg.max_duration, cfg.render.get("font", ""), layout, background)
             status = "approved" if cfg.auto_approve else "rendered"
             db.update(con, clip.id, status=status, out_path=str(out), error="")
-            log(f"  ready: {out} [{status}]")
+            log(f"  ready: {out} [{layout}, {status}]")
         except Exception as e:
             db.update(con, clip.id, status="failed", error=str(e)[:500])
             log(f"  FAILED: {e}")

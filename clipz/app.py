@@ -11,7 +11,9 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, redirect, request, send_file
 
-from . import config, db, pipeline, publish
+from werkzeug.utils import secure_filename
+
+from . import config, db, pipeline, publish, render
 from .config import Creator
 from .publish import tiktok, youtube
 
@@ -72,7 +74,13 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
         # Only this machine's browser, and only our own page, may talk to the app.
         if request.host not in (f"127.0.0.1:{port}", f"localhost:{port}"):
             abort(403)
-        if request.method != "GET" and not request.is_json:
+        if request.method == "GET":
+            return
+        if request.endpoint == "upload_background":
+            # File uploads can't be JSON, so check the request came from our own page instead.
+            if request.headers.get("Origin") not in (f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
+                abort(403)
+        elif not request.is_json:
             abort(415)
 
     @app.get("/")
@@ -87,11 +95,15 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
         for clip in db.all_clips(con):
             if clip.status in ("discovered", "downloaded"):
                 continue
-            clips.append({**asdict(clip), "posts": db.posts(con, clip.id)})
+            out = Path(clip.out_path) if clip.out_path else None
+            clips.append({**asdict(clip), "posts": db.posts(con, clip.id),
+                          "layout": clip.layout or c.render.get("layout", "framed"),
+                          "version": int(out.stat().st_mtime) if out and out.exists() else 0})
         waiting = len(db.by_status(con, "discovered"))
         settings = {k: getattr(c, k) for k in config.SCALARS}
         settings["keywords"] = c.keywords
         settings["hashtags"] = c.render.get("hashtags", [])
+        settings["layout"] = c.render.get("layout", "framed")
         for section in ("twitch", "youtube_upload", "tiktok"):
             values = dict(getattr(c, section))
             for secret in SECRET_FIELDS[section]:
@@ -100,6 +112,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
         return jsonify(
             creators=[asdict(x) for x in c.creators], clips=clips, waiting=waiting,
             settings=settings, accounts={n: m.connected(c) for n, m in publish.PLATFORMS.items()},
+            layouts=render.LAYOUTS, backgrounds=pipeline.backgrounds(c),
             tiktok_redirect=tiktok_redirect, job=state["job"], log=list(log)[-60:],
         )
 
@@ -139,7 +152,11 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
         if "keywords" in body:
             changes["keywords"] = [k.strip() for k in body["keywords"] if k.strip()]
         if "hashtags" in body:
-            changes["render"] = {"hashtags": [h.strip().lstrip("#") for h in body["hashtags"] if h.strip()]}
+            changes.setdefault("render", {})["hashtags"] = [h.strip().lstrip("#") for h in body["hashtags"] if h.strip()]
+        if "layout" in body:
+            if body["layout"] not in render.LAYOUTS:
+                return jsonify(error="unknown layout"), 400
+            changes.setdefault("render", {})["layout"] = body["layout"]
         for section in ("twitch", "youtube_upload", "tiktok"):
             # Blank fields mean "leave as is" so saved secrets never have to be re-typed.
             values = {k: v.strip() for k, v in (body.get(section) or {}).items() if isinstance(v, str) and v.strip()}
@@ -160,6 +177,45 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
     def retry():
         return jsonify(started=start_job(
             "Retrying", lambda c, con: pipeline.process(c, con, db.by_status(con, "failed"), say)))
+
+    @app.post("/api/clips/<path:clip_id>/layout")
+    def set_layout(clip_id):
+        """Change a clip's layout / gameplay video / headline and re-edit it."""
+        body = request.get_json()
+        c = cfg()
+        con = db.connect(c.db_path)
+        clip = db.get(con, clip_id)
+        if not clip:
+            abort(404)
+        if clip.status not in ("rendered", "approved", "rejected", "failed"):
+            return jsonify(error=f"clip is {clip.status} and can't be re-edited"), 400
+        layout, background = body.get("layout", ""), body.get("background", "")
+        if layout not in render.LAYOUTS:
+            return jsonify(error="unknown layout"), 400
+        if layout == "split":
+            if not pipeline.backgrounds(c):
+                return jsonify(error="Add a gameplay video first - the split layout needs one."), 400
+            if background and background not in pipeline.backgrounds(c):
+                return jsonify(error="That gameplay video no longer exists."), 400
+        title = (body.get("title") or clip.title).strip()
+
+        def job(c, con):
+            db.update(con, clip_id, layout=layout, background=background, title=title)
+            pipeline.process(c, con, [db.get(con, clip_id)], say)
+
+        return jsonify(started=start_job("Re-editing clip", job))
+
+    @app.post("/api/backgrounds")
+    def upload_background():
+        f = request.files.get("file")
+        name = secure_filename(f.filename) if f and f.filename else ""
+        if not name or Path(name).suffix.lower() not in render.BACKGROUND_TYPES:
+            return jsonify(error="Choose a video file (" + ", ".join(render.BACKGROUND_TYPES) + ")."), 400
+        folder = cfg().data_dir / "backgrounds"
+        folder.mkdir(parents=True, exist_ok=True)
+        f.save(folder / name)
+        say(f"Added gameplay video {name}")
+        return jsonify(ok=True, name=name)
 
     @app.post("/api/clips/<path:clip_id>/<action>")
     def set_status(clip_id, action):

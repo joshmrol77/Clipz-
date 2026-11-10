@@ -112,3 +112,22 @@ def test_tiktok_chunk_plan():
     size = 100 * 1024 * 1024 + 5
     chunk, count = tiktok.chunk_plan(size)
     assert count == 10 and chunk * count <= size
+
+
+def test_layout_change_validates_and_upload_is_origin_checked(env):
+    import io
+    client, tmp = env
+    con = db.connect(config.load("config.toml").db_path)
+    db.add(con, Clip(id="twitch:a", platform="twitch", creator="x", credit="x", title="t", url="u", status="rendered"))
+    assert post(client, "/api/clips/twitch:a/layout", {"layout": "nope"}).status_code == 400
+    r = post(client, "/api/clips/twitch:a/layout", {"layout": "split"})
+    assert r.status_code == 400 and "gameplay" in r.get_json()["error"]
+
+    def upload(name, origin):
+        return client.post("/api/backgrounds", data={"file": (io.BytesIO(b"x"), name)},
+                           content_type="multipart/form-data", headers={"Origin": origin})
+    assert upload("game.mp4", "http://evil.example").status_code == 403
+    assert upload("notes.txt", "http://127.0.0.1:8777").status_code == 400
+    assert upload("../../game.mp4", "http://127.0.0.1:8777").status_code == 200
+    assert client.get("/api/state").get_json()["backgrounds"] == ["game.mp4"]
+    assert (tmp / "data" / "backgrounds" / "game.mp4").exists()

@@ -58,6 +58,23 @@
   .filters button.on { border-color: var(--accent); color: var(--text); }
   code { background: var(--bg); padding: 1px 6px; border-radius: 6px; overflow-wrap: anywhere; }
   .hidden { display: none; }
+  .clip { cursor: pointer; }
+  .clip:hover { border-color: var(--accent); }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 14px;
+           padding: 20px; width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+  dialog::backdrop { background: rgba(0, 0, 0, .65); }
+  .editor { display: flex; gap: 20px; flex-wrap: wrap; }
+  .editor video { width: 250px; aspect-ratio: 9/16; background: #000; border-radius: 10px; flex: 0 0 auto; margin: 0 auto; align-self: flex-start; }
+  .editor .side { flex: 1 1 300px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .layouts { display: flex; gap: 10px; flex-wrap: wrap; }
+  .layout { flex: 1 1 110px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px;
+            font-size: 12px; color: var(--muted); text-align: center; }
+  .layout.on { border-color: var(--accent); color: var(--text); box-shadow: 0 0 0 1px var(--accent); }
+  .mini { width: 45px; height: 80px; border-radius: 5px; background: #2b3040; position: relative; overflow: hidden; }
+  .mini i { position: absolute; left: 0; right: 0; }
+  .mini .clipbox { background: var(--accent); }
+  .mini .game { background: var(--good); }
+  .mini .txt { background: #fff; height: 4px; left: 8px; right: 8px; border-radius: 2px; }
 </style>
 </head>
 <body>
@@ -73,6 +90,7 @@
   <section id="streamers" class="hidden"></section>
   <section id="accounts" class="hidden"></section>
   <section id="settings" class="hidden"></section>
+  <dialog id="editor"></dialog>
   <div class="panel">
     <h2>Activity</h2>
     <pre id="log">Nothing yet.</pre>
@@ -82,6 +100,7 @@
 const TABS = { clips: "Clips", streamers: "Streamers", accounts: "Accounts", settings: "Settings" };
 const FILTERS = { rendered: "To review", approved: "Approved", published: "Posted", rejected: "Rejected", failed: "Failed" };
 let S = null, tab = (location.hash.slice(1) in TABS) ? location.hash.slice(1) : "clips", filter = "rendered";
+let editing = null, pick = null;  // clip id open in the editor, and the choices made there so far
 let dirty = false;  // true while the user is typing in a form, so refreshes don't wipe their input
 
 // Build DOM nodes without ever parsing strings as HTML (clip titles come from the internet).
@@ -115,6 +134,7 @@ async function refresh() {
   log.textContent = S.log.length ? S.log.join("\n") : "Nothing yet.";
   if (atBottom) log.scrollTop = log.scrollHeight;
   renderTabs();
+  if (editing) renderEditor();
   if (tab === "clips") renderClips();
   else if (!dirty) ({ streamers: renderStreamers, accounts: renderAccounts, settings: renderSettings })[tab]();
 }
@@ -138,7 +158,7 @@ function renderClips() {
     filter === "rendered" && counts.rendered ? h("button", { on: { click: approveAll } }, "Approve all") : null,
     filter === "failed" && counts.failed ? h("button", { on: { click: () => api("POST", "/api/retry") } }, "Retry failed") : null);
   const shown = S.clips.filter(c => c.status === filter);
-  const key = filter + "|" + shown.map(c => c.id + c.status + JSON.stringify(c.posts)).join(",");
+  const key = filter + "|" + shown.map(c => c.id + c.status + c.version + c.title + JSON.stringify(c.posts)).join(",");
   const root = $("clips");
   if (root.dataset.key === key) { root.firstChild.replaceWith(bar); return; }  // keep videos playing
   root.dataset.key = key;
@@ -148,22 +168,95 @@ function renderClips() {
   root.replaceChildren(bar, shown.length ? h("div", { className: "grid" }, shown.map(clipCard)) : h("p", { className: "muted" }, empty));
 }
 
+const MINI = {
+  framed: () => [h("i", { className: "txt", style: "top:16px" }), h("i", { className: "clipbox", style: "top:27px;height:26px" })],
+  full: () => [h("i", { className: "clipbox", style: "top:0;height:80px" })],
+  split: () => [h("i", { className: "clipbox", style: "top:0;height:40px" }), h("i", { className: "game", style: "top:40px;height:40px" }), h("i", { className: "txt", style: "top:38px" })],
+};
+const NAMES = { framed: "Framed", full: "Just the clip", split: "Clip + gameplay" };
+const mediaUrl = c => `/media/${encodeURIComponent(c.id)}?v=${c.version}#t=0.1`;
+
+function openEditor(c) {
+  editing = c.id;
+  pick = { layout: c.layout, background: c.background || "", title: c.title };
+  $("editor").dataset.key = "";
+  renderEditor();
+  $("editor").showModal();
+}
+function closeEditor() { editing = null; $("editor").close(); }
+
+function renderEditor() {
+  const c = S.clips.find(x => x.id === editing);
+  if (!c) return closeEditor();
+  const key = [c.version, c.status, S.job, S.backgrounds.join("|"), pick.layout, pick.background].join("~");
+  const root = $("editor");
+  if (root.dataset.key === key) return;  // nothing changed: don't restart the video or lose typing
+  root.dataset.key = key;
+  const id = encodeURIComponent(c.id), busy = !!S.job, editable = c.status !== "published";
+  const title = h("input", { type: "text", value: pick.title, disabled: !editable, on: { input: e => pick.title = e.target.value } });
+  const tiles = Object.keys(S.layouts).map(name =>
+    h("button", { className: "layout" + (name === pick.layout ? " on" : ""), title: S.layouts[name], disabled: !editable,
+                  on: { click: () => { pick.layout = name; renderEditor(); } } },
+      h("div", { className: "mini" }, MINI[name] ? MINI[name]() : []), NAMES[name] || name));
+  const upload = h("input", { type: "file", accept: "video/*", className: "hidden", on: { change: e => uploadBackground(e.target.files[0]) } });
+  const gameplay = pick.layout !== "split" ? null : h("div", {},
+    h("div", { className: "muted" }, "Gameplay video for the bottom half (use footage you recorded or have the rights to)"),
+    h("div", { className: "row", style: "margin-top:6px" },
+      S.backgrounds.length
+        ? h("select", { style: "flex:1", on: { change: e => { pick.background = e.target.value; } } },
+            S.backgrounds.map(b => h("option", { value: b, selected: b === pick.background }, b)))
+        : h("span", { className: "err", style: "flex:1" }, "None added yet."),
+      upload, h("button", { on: { click: () => upload.click() } }, "Add video…")));
+  const changed = pick.layout !== c.layout || pick.title !== c.title || (pick.layout === "split" && (pick.background || S.backgrounds[0] || "") !== (c.background || ""));
+  const apply = () => api("POST", `/api/clips/${id}/layout`, { layout: pick.layout, title: pick.title,
+    background: pick.layout === "split" ? (pick.background || S.backgrounds[0] || "") : "" });
+  root.replaceChildren(h("div", { className: "editor" },
+    c.out_path ? h("video", { src: mediaUrl(c), controls: true, preload: "metadata" }) : null,
+    h("div", { className: "side" },
+      h("div", { className: "row" }, h("h2", { style: "margin:0 auto 0 0" }, "Edit clip"), h("span", { className: "badge " + c.status }, FILTERS[c.status] || c.status)),
+      h("div", { className: "muted" }, `${c.credit} · ${c.views.toLocaleString()} views`),
+      h("label", { className: "field" }, "Headline (also used as the post title)", title),
+      h("div", {}, h("div", { className: "muted", style: "margin-bottom:6px" }, "Layout"), h("div", { className: "layouts" }, tiles)),
+      gameplay,
+      c.status === "failed" ? h("div", { className: "err" }, c.error) : null,
+      editable ? h("button", { className: "primary", disabled: busy, on: { click: apply } },
+        busy ? S.job + "…" : changed ? "Apply and re-edit" : "Re-edit clip") : h("div", { className: "muted" }, "Already posted - can't be changed."),
+      h("div", { className: "row" },
+        ["rendered", "rejected"].includes(c.status) ? h("button", { className: "good", on: { click: async () => { await api("POST", `/api/clips/${id}/approve`); closeEditor(); } } }, "Approve") : null,
+        ["rendered", "approved"].includes(c.status) ? h("button", { className: "ghost-bad", on: { click: async () => { await api("POST", `/api/clips/${id}/reject`); closeEditor(); } } }, "Reject") : null,
+        h("button", { style: "margin-left:auto", on: { click: closeEditor } }, "Close")))));
+}
+
+async function uploadBackground(file) {
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  const r = await fetch("/api/backgrounds", { method: "POST", body: form });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) return alert(data.error || "Upload failed (" + r.status + ")");
+  pick.background = data.name;
+  await refresh();
+}
+
 function clipCard(c) {
   const id = encodeURIComponent(c.id);
+  const stop = fn => e => { e.stopPropagation(); fn(); };
   const posts = Object.entries(c.posts).map(([name, p]) =>
     p.ref ? h("div", { className: "muted" }, `Posted to ${name}: `, /^https?:/.test(p.ref) ? h("a", { href: p.ref, target: "_blank", rel: "noopener", style: "color:inherit" }, "open") : p.ref)
           : h("div", { className: "err" }, `${name}: ${p.error}`));
-  return h("div", { className: "clip" },
-    c.out_path ? h("video", { src: "/media/" + id + "#t=0.1", controls: true, preload: "metadata" }) : null,
+  return h("div", { className: "clip", title: "Click to change the layout", on: { click: () => openEditor(c) } },
+    c.out_path ? h("video", { src: mediaUrl(c), muted: true, preload: "metadata" }) : null,
     h("div", { className: "body" },
       h("div", { className: "title" }, c.title || "(untitled)"),
       h("div", { className: "muted" }, `${c.credit} · ${c.views.toLocaleString()} views`),
-      h("div", {}, h("span", { className: "badge " + c.status }, FILTERS[c.status] || c.status)),
+      h("div", { className: "row" }, h("span", { className: "badge " + c.status }, FILTERS[c.status] || c.status),
+        h("span", { className: "muted" }, NAMES[c.layout] || c.layout)),
       c.status === "failed" ? h("div", { className: "err" }, c.error) : null,
       posts,
       h("div", { className: "row", style: "margin-top:auto" },
-        ["rendered", "rejected"].includes(c.status) ? h("button", { className: "good", on: { click: () => api("POST", `/api/clips/${id}/approve`) } }, "Approve") : null,
-        ["rendered", "approved"].includes(c.status) ? h("button", { className: "ghost-bad", on: { click: () => api("POST", `/api/clips/${id}/reject`) } }, "Reject") : null)));
+        ["rendered", "rejected"].includes(c.status) ? h("button", { className: "good", on: { click: stop(() => api("POST", `/api/clips/${id}/approve`)) } }, "Approve") : null,
+        ["rendered", "approved"].includes(c.status) ? h("button", { className: "ghost-bad", on: { click: stop(() => api("POST", `/api/clips/${id}/reject`)) } }, "Reject") : null,
+        h("button", { style: "margin-left:auto" }, "Edit"))));
 }
 async function approveAll() {
   for (const c of S.clips.filter(c => c.status === "rendered")) await api("POST", `/api/clips/${encodeURIComponent(c.id)}/approve`);
@@ -231,13 +324,14 @@ function renderSettings() {
     max_clips_per_run: text(st.max_clips_per_run, "", "number"), max_duration: text(st.max_duration, "", "number"),
     schedule_minutes: text(st.schedule_minutes, "", "number"),
     auto_approve: h("input", { type: "checkbox", checked: st.auto_approve, on: { change: () => dirty = true } }),
+    layout: h("select", { on: { change: () => dirty = true } }, Object.keys(S.layouts).map(l => h("option", { value: l, selected: st.layout === l }, NAMES[l] || l))),
     twId: text(st.twitch.client_id), twSecret: secret(st.twitch.client_secret_set),
   };
   const list = el => el.value.split(",").map(s => s.trim()).filter(Boolean);
   const save = () => api("POST", "/api/settings", {
     game: f.game.value, keywords: list(f.keywords), hashtags: list(f.hashtags),
     lookback_hours: f.lookback_hours.value, min_views: f.min_views.value, max_clips_per_run: f.max_clips_per_run.value,
-    max_duration: f.max_duration.value, schedule_minutes: f.schedule_minutes.value, auto_approve: f.auto_approve.checked,
+    max_duration: f.max_duration.value, schedule_minutes: f.schedule_minutes.value, auto_approve: f.auto_approve.checked, layout: f.layout.value,
     twitch: { client_id: f.twId.value, client_secret: f.twSecret.value },
   });
   $("settings").replaceChildren(
@@ -247,7 +341,8 @@ function renderSettings() {
         field("Game (Twitch category name)", f.game), field("YouTube title must contain one of", f.keywords), field("Hashtags on posts", f.hashtags)),
       h("div", { className: "row", style: "margin-top:10px" },
         field("Only clips newer than (hours)", f.lookback_hours), field("Minimum views", f.min_views),
-        field("Clips to edit per search", f.max_clips_per_run), field("Max clip length (seconds)", f.max_duration))),
+        field("Clips to edit per search", f.max_clips_per_run), field("Max clip length (seconds)", f.max_duration)),
+      h("div", { className: "row", style: "margin-top:10px" }, field("Layout for new clips (change any clip later by clicking it)", f.layout))),
     h("div", { className: "panel" },
       h("h2", {}, "Autopilot"),
       h("p", { className: "muted" }, "Works while this app is open on your computer."),
@@ -260,6 +355,7 @@ function renderSettings() {
     h("button", { className: "primary", on: { click: save } }, "Save settings"));
 }
 
+$("editor").addEventListener("close", () => { editing = null; });
 $("run").addEventListener("click", () => api("POST", "/api/run"));
 $("post").addEventListener("click", () => api("POST", "/api/publish"));
 show();

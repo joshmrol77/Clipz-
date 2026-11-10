@@ -53,3 +53,34 @@ def test_render_produces_vertical_video(tmp_path):
         capture_output=True, text=True, check=True).stdout.split()
     assert probe[0] == "1080,1920"
     assert 1.5 < float(probe[1]) < 2.6
+
+
+@pytest.mark.parametrize("layout", ["full", "split"])
+def test_other_layouts_render_vertical_and_end_with_the_clip(tmp_path, layout):
+    src, bg, out = tmp_path / "src.mp4", tmp_path / "bg.mp4", tmp_path / "out.mp4"
+    for path, size, secs in ((src, "1280x720", 3), (bg, "640x360", 1)):   # bg shorter: must loop
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"testsrc=s={size}:d={secs}",
+             "-f", "lavfi", "-i", f"sine=d={secs}", "-shortest", "-pix_fmt", "yuv420p", str(path)], check=True)
+    render.render(src, out, "A title", "twitch.tv/x", layout=layout, background=bg)
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width,height:format=duration", "-of", "csv=p=0", str(out)],
+        capture_output=True, text=True, check=True).stdout.split()
+    assert probe[0] == "1080,1920"
+    assert 2.5 < float(probe[1]) < 3.6
+
+
+def test_split_layout_without_gameplay_video_explains_itself(tmp_path):
+    with pytest.raises(RuntimeError, match="gameplay video"):
+        render.render(tmp_path / "x.mp4", tmp_path / "o.mp4", "t", "c", layout="split")
+
+
+def test_old_database_gains_new_columns(tmp_path):
+    import sqlite3
+    old = sqlite3.connect(tmp_path / "old.sqlite")
+    cols = [c for c in db.COLUMNS if c not in ("layout", "background")]
+    old.execute(f"CREATE TABLE clips ({', '.join(cols)})")
+    old.execute(f"INSERT INTO clips (id, title, status) VALUES ('a', 't', 'rendered')")
+    old.commit(); old.close()
+    assert db.get(db.connect(tmp_path / "old.sqlite"), "a").layout == ""

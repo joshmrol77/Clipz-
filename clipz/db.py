@@ -32,6 +32,8 @@ class Clip:
     out_path: str = ""
     published_url: str = ""
     error: str = ""
+    layout: str = ""        # "" = use the default layout from settings
+    background: str = ""    # file name in <data_dir>/backgrounds, for the split layout
 
 
 COLUMNS = list(Clip.__dataclass_fields__)
@@ -42,6 +44,10 @@ def connect(path: Path) -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     cols = ", ".join(f"{c} PRIMARY KEY" if c == "id" else c for c in COLUMNS)
     con.execute(f"CREATE TABLE IF NOT EXISTS clips ({cols})")
+    have = {r["name"] for r in con.execute("PRAGMA table_info(clips)")}
+    for c in COLUMNS:  # databases made by an older version gain new columns here
+        if c not in have:
+            con.execute(f"ALTER TABLE clips ADD COLUMN {c} DEFAULT ''")
     con.execute("CREATE TABLE IF NOT EXISTS posts (clip_id, platform, ref, error, "
                 "PRIMARY KEY (clip_id, platform))")
     return con

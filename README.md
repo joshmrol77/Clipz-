@@ -29,6 +29,18 @@ Your browser opens at <http://127.0.0.1:8777>. Everything is done from four tabs
 The two buttons at the top do the work: **Find new clips** searches, downloads and edits;
 **Post approved clips** sends every approved clip to every connected account.
 
+### Layouts
+
+Click any clip to open its editor, where you can retype the headline and switch layout:
+
+- **Framed** - clip in the middle, headline above, blurred backdrop.
+- **Just the clip** - the clip fills the whole screen (its sides are cropped).
+- **Clip + gameplay** - clip on the top half, a looping gameplay video on the bottom half.
+  Press **Add video...** to upload gameplay footage you recorded or have the rights to.
+
+Pressing **Apply and re-edit** rebuilds the video, which then needs approving again. The
+layout used for new clips is chosen in Settings.
+
 Autopilot (Settings) repeats the search every N minutes and can skip review entirely. It
 runs only while the app is open.
 
