@@ -158,3 +158,44 @@ def test_all_content_streamers_skip_the_game_filter_and_get_their_own_tags(monke
     assert cfg.hashtags_for(irl) == ["togi"] and cfg.hashtags_for(game) == ["GTA6"]
     assert youtube.metadata(irl, cfg.hashtags_for(irl), cfg.is_gaming(irl))["categoryId"] == "24"
     assert youtube.metadata(game, cfg.hashtags_for(game), cfg.is_gaming(game))["categoryId"] == "20"
+
+
+def test_instagram_connect_and_reel_upload_sequence(tmp_path, monkeypatch):
+    from clipz.publish import instagram
+    cfg = config.Config(data_dir=tmp_path)
+    video = tmp_path / "v.mp4"; video.write_bytes(b"12345")
+    clip = Clip(id="c", platform="twitch", creator="x", credit="twitch.tv/x", title="t", url="u", out_path=str(video))
+    calls, polls = [], iter(["IN_PROGRESS", "FINISHED"])
+
+    class Reply:
+        def __init__(self, data, code=200): self.data, self.status_code = data, code
+        def json(self): return self.data
+
+    def get(url, params=None, **kw):
+        calls.append(("GET", url))
+        if url.endswith("/me"):
+            return Reply({"error": {"message": "bad token"}}, 400) if params["access_token"] == "bad" else Reply({"user_id": 42, "username": "me"})
+        if url.endswith("/CONT"):
+            return Reply({"status_code": next(polls)})
+        return Reply({"permalink": "https://instagram.com/reel/abc"})
+
+    def post(url, data=None, headers=None, **kw):
+        calls.append(("POST", url))
+        if url.endswith("/42/media"):
+            assert data["media_type"] == "REELS" and "twitch.tv/x" in data["caption"]
+            return Reply({"id": "CONT"})
+        if "rupload" in url:
+            assert headers["file_size"] == "5" and data.read() == b"12345"
+            return Reply({"success": True})
+        assert data["creation_id"] == "CONT"
+        return Reply({"id": "MEDIA"})
+
+    monkeypatch.setattr(instagram.requests, "get", get)
+    monkeypatch.setattr(instagram.requests, "post", post)
+    with pytest.raises(RuntimeError, match="bad token"):
+        instagram.connect(cfg, "bad")
+    assert not instagram.connected(cfg)
+    assert instagram.connect(cfg, " good ") == "me" and instagram.connected(cfg)
+    assert instagram.upload(cfg, clip, sleep=lambda s: None) == "https://instagram.com/reel/abc"
+    order = [u.rsplit("/", 1)[-1] for m, u in calls if m == "POST"]
+    assert order == ["media", "CONT", "media_publish"]

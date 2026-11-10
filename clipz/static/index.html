@@ -296,6 +296,7 @@ function renderAccounts() {
   const ytPrivacy = h("select", { on: { change: () => dirty = true } }, ["private", "unlisted", "public"].map(p => h("option", { value: p, selected: (yt.privacy || "private") === p }, p)));
   const ttKey = text(tt.client_key), ttSecret = secret(tt.client_secret_set);
   const ttPrivacy = h("select", { on: { change: () => dirty = true } }, [["SELF_ONLY", "Private (required until TikTok audits your app)"], ["PUBLIC_TO_EVERYONE", "Public"]].map(([v, n]) => h("option", { value: v, selected: (tt.privacy || "SELF_ONLY") === v }, n)));
+  const igToken = text("", S.accounts.instagram ? "saved - paste a new one to replace it" : "", "password");
   const status = name => S.accounts[name] ? h("span", { className: "badge approved" }, "Connected") : h("span", { className: "badge" }, "Not connected");
   const disconnect = name => S.accounts[name] ? h("button", { className: "ghost-bad", on: { click: () => api("POST", "/api/disconnect/" + name) } }, "Disconnect") : null;
   const saveYt = () => api("POST", "/api/settings", { youtube_upload: { client_id: ytId.value, client_secret: ytSecret.value, privacy: ytPrivacy.value } });
@@ -318,8 +319,12 @@ function renderAccounts() {
         h("button", { className: "primary", on: { click: async () => { if (await saveTt()) location.href = "/connect/tiktok"; } } }, S.accounts.tiktok ? "Reconnect TikTok" : "Connect TikTok"),
         disconnect("tiktok"))),
     h("div", { className: "panel" },
-      h("h2", {}, "Instagram Reels"),
-      h("p", { className: "muted" }, "Not available yet. Instagram only accepts videos from a public web address, so it can't take files straight from this computer. For now, post the finished videos from the data/out folder by hand.")));
+      h("div", { className: "row" }, h("h2", { style: "margin-right:auto" }, "Instagram Reels"), status("instagram")),
+      h("p", { className: "muted" }, "One-time setup: your Instagram must be a Business or Creator account. At developers.facebook.com create an app, add the \"Instagram\" product (API setup with Instagram login), add your account there and press \"Generate token\". Paste that token here."),
+      h("div", { className: "row" }, field("Access token", igToken)),
+      h("div", { className: "row", style: "margin-top:12px" },
+        h("button", { className: "primary", on: { click: () => api("POST", "/api/connect/instagram", { token: igToken.value }) } }, S.accounts.instagram ? "Reconnect Instagram" : "Connect Instagram"),
+        disconnect("instagram"))));
 }
 
 function renderSettings() {

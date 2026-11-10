@@ -15,7 +15,7 @@ from werkzeug.utils import secure_filename
 
 from . import config, db, pipeline, publish, render
 from .config import Creator
-from .publish import tiktok, youtube
+from .publish import instagram, tiktok, youtube
 
 SECRET_FIELDS = {"twitch": ["client_secret"], "youtube_upload": ["client_secret"], "tiktok": ["client_secret"]}
 STATIC = Path(__file__).parent / "static"
@@ -270,6 +270,15 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
             except Exception as e:
                 say(str(e))
         return redirect("/#accounts")
+
+    @app.post("/api/connect/instagram")
+    def connect_instagram():
+        try:
+            username = instagram.connect(cfg(), request.get_json().get("token", ""))
+        except Exception as e:
+            return jsonify(error=str(e)), 400
+        say(f"Instagram connected{' as @' + username if username else ''}.")
+        return jsonify(ok=True)
 
     @app.post("/api/disconnect/<name>")
     def disconnect(name):

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from ..config import Config
-from . import tiktok, youtube
+from . import instagram, tiktok, youtube
 
-PLATFORMS = {youtube.NAME: youtube, tiktok.NAME: tiktok}
+PLATFORMS = {youtube.NAME: youtube, tiktok.NAME: tiktok, instagram.NAME: instagram}
 
 
 def connected(cfg: Config) -> list[str]:

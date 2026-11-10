@@ -2,7 +2,7 @@
 
 Finds the top clips from streamers you're allowed to clip, turns them into vertical
 shorts (headline + creator credit, blurred background, normalised audio), and posts the
-ones you approve to your YouTube and TikTok accounts.
+ones you approve to your YouTube, TikTok and Instagram accounts with one click.
 
 ```
 find (Twitch / Kick / YouTube)  ->  download  ->  edit to 9:16  ->  review  ->  post everywhere
@@ -23,7 +23,7 @@ Your browser opens at <http://127.0.0.1:8777>. Everything is done from four tabs
 |---|---|
 | **Streamers** | Add or remove the channels Clipz watches. For each one choose "only the game" or "all their clips" (IRL, chatting, anything), and optionally give them their own hashtags. |
 | **Settings** | Paste your Twitch keys, choose the game, turn on autopilot. |
-| **Accounts** | Connect YouTube and TikTok. |
+| **Accounts** | Connect YouTube, TikTok and Instagram. |
 | **Clips** | Watch each edited clip, then Approve or Reject it. |
 
 The two buttons at the top do the work: **Find new clips** searches, downloads and edits;
@@ -57,8 +57,10 @@ Each platform makes you register a free developer app before software may act fo
   *Content Posting API* (Direct Post) -> register the redirect address shown in Accounts ->
   paste key and secret -> **Connect TikTok**. Until TikTok audits your app, posts arrive as
   private and you make them public in the TikTok app.
-- **Instagram**: not supported yet (it only accepts videos hosted at a public web address).
-  Post the files in `data/out/` by hand.
+- **Instagram** (to post): needs a Business or Creator Instagram account.
+  <https://developers.facebook.com> -> create an app -> add the *Instagram* product (API setup
+  with Instagram login) -> add your account -> **Generate token** -> paste it in Accounts ->
+  **Connect Instagram**. To post publicly beyond your own test accounts, Meta may require app review.
 
 ## How clips are picked
 
@@ -74,7 +76,7 @@ Each platform makes you register a free developer app before software may act fo
 
 Tested: the editing, the queue, and the app's screens and buttons. **Not yet run against the
 real services**: Twitch/Kick/YouTube search and download, YouTube upload, and the TikTok
-connection and upload (written from TikTok's spec). Expect to fix small things on first
+and Instagram connections and uploads (written from their specs). Expect to fix small things on first
 real use.
 
 ## Permission
