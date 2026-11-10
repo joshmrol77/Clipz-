@@ -3,7 +3,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from clipz import db, publish, rank, render
+from clipz import db, rank, render
+from clipz.publish import youtube as publish
 from clipz.db import Clip
 
 

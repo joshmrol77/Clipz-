@@ -1,4 +1,5 @@
-# Copy to config.toml and fill in.
+# Optional. The app (`clipz app`) saves everything it needs by itself; this file is only for
+# people who prefer editing settings by hand. Copy to config.toml and fill in.
 
 game = "Grand Theft Auto VI"      # Twitch category name; also used as a Kick category filter
 keywords = ["gta"]                # YouTube videos must contain one of these in the title
@@ -7,6 +8,7 @@ min_views = 50                    # ignore clips below this view count
 max_clips_per_run = 10            # how many of the top-ranked clips to download + render per run
 max_duration = 60                 # seconds; longer clips are trimmed
 auto_approve = false              # true = rendered clips skip the review step and are publishable immediately
+schedule_minutes = 0              # app only: search automatically every N minutes (0 = off)
 data_dir = "data"
 
 # Creators you are allowed to clip (their clipping program, written permission, or your own
@@ -30,5 +32,11 @@ font = ""                         # path to a .ttf/.otf; empty = auto-detect a b
 hashtags = ["GTA6", "GTAVI", "gaming"]
 
 [youtube_upload]                  # Google Cloud console -> YouTube Data API v3 -> OAuth "Desktop app" client
-client_secrets_file = "client_secret.json"
+client_id = ""
+client_secret = ""
 privacy = "private"               # private | unlisted | public
+
+[tiktok]                          # developers.tiktok.com -> app with Login Kit + Content Posting API
+client_key = ""
+client_secret = ""
+privacy = "SELF_ONLY"             # SELF_ONLY until TikTok audits your app, then PUBLIC_TO_EVERYONE

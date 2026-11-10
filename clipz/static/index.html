@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clipz</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #181b22; --line: #2a2f3a; --text: #e8eaf0; --muted: #98a0b3;
+    --accent: #7c5cff; --good: #2fbf71; --bad: #e5484d; --warn: #e2a336;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+           padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0 auto 0 0; font-size: 20px; letter-spacing: .5px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
+  nav button { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+               color: var(--muted); padding: 10px 14px; }
+  nav button.on { color: var(--text); border-bottom-color: var(--accent); }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel);
+           color: var(--text); padding: 8px 14px; border-radius: 8px; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.good { background: var(--good); border-color: var(--good); color: #06240f; font-weight: 600; }
+  button.ghost-bad { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select { font: inherit; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+                  border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  input[type=checkbox] { width: 18px; height: 18px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { margin: 0 0 4px; font-size: 16px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .row > input[type=text], .row > input[type=password] { flex: 1 1 180px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
+  .clip { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+          display: flex; flex-direction: column; }
+  .clip video { width: 100%; aspect-ratio: 9/16; background: #000; display: block; }
+  .clip .body { padding: 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .clip .title { font-weight: 600; overflow-wrap: anywhere; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; font-weight: 600;
+           border: 1px solid var(--line); color: var(--muted); }
+  .badge.rendered { color: var(--warn); border-color: var(--warn); }
+  .badge.approved, .badge.published { color: var(--good); border-color: var(--good); }
+  .badge.failed, .badge.rejected { color: var(--bad); border-color: var(--bad); }
+  .err { color: var(--bad); font-size: 13px; overflow-wrap: anywhere; }
+  .list { list-style: none; margin: 12px 0 0; padding: 0; }
+  .list li { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+  .list li span:first-child { flex: 1; overflow-wrap: anywhere; }
+  label.field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 200px; font-size: 13px; color: var(--muted); }
+  label.check { display: flex; gap: 8px; align-items: center; }
+  #log { font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace; color: var(--muted); white-space: pre-wrap;
+         max-height: 180px; overflow-y: auto; overflow-wrap: anywhere; margin: 8px 0 0; }
+  #job { color: var(--warn); font-size: 13px; }
+  .filters button.on { border-color: var(--accent); color: var(--text); }
+  code { background: var(--bg); padding: 1px 6px; border-radius: 6px; overflow-wrap: anywhere; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Clipz</h1>
+  <span id="job"></span>
+  <button id="run" class="primary">Find new clips</button>
+  <button id="post" class="good">Post approved clips</button>
+</header>
+<main>
+  <nav id="tabs"></nav>
+  <section id="clips"></section>
+  <section id="streamers" class="hidden"></section>
+  <section id="accounts" class="hidden"></section>
+  <section id="settings" class="hidden"></section>
+  <div class="panel">
+    <h2>Activity</h2>
+    <pre id="log">Nothing yet.</pre>
+  </div>
+</main>
+<script>
+const TABS = { clips: "Clips", streamers: "Streamers", accounts: "Accounts", settings: "Settings" };
+const FILTERS = { rendered: "To review", approved: "Approved", published: "Posted", rejected: "Rejected", failed: "Failed" };
+let S = null, tab = (location.hash.slice(1) in TABS) ? location.hash.slice(1) : "clips", filter = "rendered";
+let dirty = false;  // true while the user is typing in a form, so refreshes don't wipe their input
+
+// Build DOM nodes without ever parsing strings as HTML (clip titles come from the internet).
+function h(tag, props = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "on") for (const [ev, fn] of Object.entries(v)) el.addEventListener(ev, fn);
+    else if (k in el) el[k] = v; else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid);
+  return el;
+}
+const $ = id => document.getElementById(id);
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) alert(data.error || "Something went wrong (" + r.status + ")");
+  else if (data.started === false) alert("Clipz is busy with another task - try again when it finishes.");
+  dirty = false;
+  await refresh();
+  return r.ok;
+}
+
+async function refresh() {
+  const r = await fetch("/api/state");
+  S = await r.json();
+  $("job").textContent = S.job ? S.job + "…" : "";
+  $("run").disabled = $("post").disabled = !!S.job;
+  const log = $("log"), atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+  log.textContent = S.log.length ? S.log.join("\n") : "Nothing yet.";
+  if (atBottom) log.scrollTop = log.scrollHeight;
+  renderTabs();
+  if (tab === "clips") renderClips();
+  else if (!dirty) ({ streamers: renderStreamers, accounts: renderAccounts, settings: renderSettings })[tab]();
+}
+
+function renderTabs() {
+  $("tabs").replaceChildren(...Object.entries(TABS).map(([id, name]) =>
+    h("button", { className: id === tab ? "on" : "", on: { click: () => { tab = id; location.hash = id; dirty = false; show(); } } }, name)));
+}
+function show() {
+  for (const id of Object.keys(TABS)) $(id).classList.toggle("hidden", id !== tab);
+  refresh();
+}
+
+function renderClips() {
+  const counts = {};
+  for (const c of S.clips) counts[c.status] = (counts[c.status] || 0) + 1;
+  const bar = h("div", { className: "row filters", style: "margin-bottom:16px" },
+    Object.entries(FILTERS).map(([id, name]) =>
+      h("button", { className: id === filter ? "on" : "", on: { click: () => { filter = id; renderClips(); } } },
+        `${name} (${counts[id] || 0})`)),
+    filter === "rendered" && counts.rendered ? h("button", { on: { click: approveAll } }, "Approve all") : null,
+    filter === "failed" && counts.failed ? h("button", { on: { click: () => api("POST", "/api/retry") } }, "Retry failed") : null);
+  const shown = S.clips.filter(c => c.status === filter);
+  const key = filter + "|" + shown.map(c => c.id + c.status + JSON.stringify(c.posts)).join(",");
+  const root = $("clips");
+  if (root.dataset.key === key) { root.firstChild.replaceWith(bar); return; }  // keep videos playing
+  root.dataset.key = key;
+  const empty = filter === "rendered"
+    ? `No clips waiting for review. Press "Find new clips" to look.` + (S.waiting ? ` (${S.waiting} more found but not yet edited.)` : "")
+    : "Nothing here.";
+  root.replaceChildren(bar, shown.length ? h("div", { className: "grid" }, shown.map(clipCard)) : h("p", { className: "muted" }, empty));
+}
+
+function clipCard(c) {
+  const id = encodeURIComponent(c.id);
+  const posts = Object.entries(c.posts).map(([name, p]) =>
+    p.ref ? h("div", { className: "muted" }, `Posted to ${name}: `, /^https?:/.test(p.ref) ? h("a", { href: p.ref, target: "_blank", rel: "noopener", style: "color:inherit" }, "open") : p.ref)
+          : h("div", { className: "err" }, `${name}: ${p.error}`));
+  return h("div", { className: "clip" },
+    c.out_path ? h("video", { src: "/media/" + id + "#t=0.1", controls: true, preload: "metadata" }) : null,
+    h("div", { className: "body" },
+      h("div", { className: "title" }, c.title || "(untitled)"),
+      h("div", { className: "muted" }, `${c.credit} · ${c.views.toLocaleString()} views`),
+      h("div", {}, h("span", { className: "badge " + c.status }, FILTERS[c.status] || c.status)),
+      c.status === "failed" ? h("div", { className: "err" }, c.error) : null,
+      posts,
+      h("div", { className: "row", style: "margin-top:auto" },
+        ["rendered", "rejected"].includes(c.status) ? h("button", { className: "good", on: { click: () => api("POST", `/api/clips/${id}/approve`) } }, "Approve") : null,
+        ["rendered", "approved"].includes(c.status) ? h("button", { className: "ghost-bad", on: { click: () => api("POST", `/api/clips/${id}/reject`) } }, "Reject") : null)));
+}
+async function approveAll() {
+  for (const c of S.clips.filter(c => c.status === "rendered")) await api("POST", `/api/clips/${encodeURIComponent(c.id)}/approve`);
+}
+
+function renderStreamers() {
+  const platform = h("select", {}, ["twitch", "kick", "youtube"].map(p => h("option", { value: p }, p[0].toUpperCase() + p.slice(1))));
+  const channel = h("input", { type: "text", placeholder: "Channel name, e.g. some_streamer or @SomeChannel", on: { input: () => dirty = true } });
+  const ok = h("input", { type: "checkbox" });
+  const add = () => api("POST", "/api/creators", { platform: platform.value, channel: channel.value, permission: ok.checked });
+  $("streamers").replaceChildren(h("div", { className: "panel" },
+    h("h2", {}, "Streamers to clip"),
+    h("p", { className: "muted" }, "Clipz only looks at channels on this list. Add creators who run a clipping program or have told you it's OK - posting someone's footage without permission gets channels struck."),
+    h("div", { className: "row" }, platform, channel, h("button", { className: "primary", on: { click: add } }, "Add")),
+    h("label", { className: "check muted", style: "margin-top:10px" }, ok, "I have this creator's permission to post their clips"),
+    h("ul", { className: "list" }, S.creators.length ? S.creators.map(c =>
+      h("li", {}, h("span", {}, c.channel), h("span", { className: "badge" }, c.platform),
+        h("button", { className: "ghost-bad", on: { click: () => api("DELETE", "/api/creators", c) } }, "Remove")))
+      : h("li", { className: "muted" }, "No streamers yet."))));
+}
+
+function field(label, input) { return h("label", { className: "field" }, label, input); }
+function text(value, placeholder = "", type = "text") {
+  return h("input", { type, value: value ?? "", placeholder, on: { input: () => dirty = true } });
+}
+function secret(isSet) { return text("", isSet ? "saved - leave blank to keep" : "", "password"); }
+
+function renderAccounts() {
+  const st = S.settings, yt = st.youtube_upload, tt = st.tiktok;
+  const ytId = text(yt.client_id), ytSecret = secret(yt.client_secret_set);
+  const ytPrivacy = h("select", { on: { change: () => dirty = true } }, ["private", "unlisted", "public"].map(p => h("option", { value: p, selected: (yt.privacy || "private") === p }, p)));
+  const ttKey = text(tt.client_key), ttSecret = secret(tt.client_secret_set);
+  const ttPrivacy = h("select", { on: { change: () => dirty = true } }, [["SELF_ONLY", "Private (required until TikTok audits your app)"], ["PUBLIC_TO_EVERYONE", "Public"]].map(([v, n]) => h("option", { value: v, selected: (tt.privacy || "SELF_ONLY") === v }, n)));
+  const status = name => S.accounts[name] ? h("span", { className: "badge approved" }, "Connected") : h("span", { className: "badge" }, "Not connected");
+  const disconnect = name => S.accounts[name] ? h("button", { className: "ghost-bad", on: { click: () => api("POST", "/api/disconnect/" + name) } }, "Disconnect") : null;
+  const saveYt = () => api("POST", "/api/settings", { youtube_upload: { client_id: ytId.value, client_secret: ytSecret.value, privacy: ytPrivacy.value } });
+  const saveTt = () => api("POST", "/api/settings", { tiktok: { client_key: ttKey.value, client_secret: ttSecret.value, privacy: ttPrivacy.value } });
+  $("accounts").replaceChildren(
+    h("div", { className: "panel" },
+      h("div", { className: "row" }, h("h2", { style: "margin-right:auto" }, "YouTube Shorts"), status("youtube")),
+      h("p", { className: "muted" }, "One-time setup: in Google Cloud Console create a project, enable \"YouTube Data API v3\", then create an OAuth client of type \"Desktop app\" and paste its ID and secret here."),
+      h("div", { className: "row" }, field("Client ID", ytId), field("Client secret", ytSecret), field("New videos are", ytPrivacy)),
+      h("div", { className: "row", style: "margin-top:12px" },
+        h("button", { on: { click: saveYt } }, "Save"),
+        h("button", { className: "primary", on: { click: async () => { if (await saveYt()) api("POST", "/api/connect/youtube"); } } }, S.accounts.youtube ? "Reconnect YouTube" : "Connect YouTube"),
+        disconnect("youtube"))),
+    h("div", { className: "panel" },
+      h("div", { className: "row" }, h("h2", { style: "margin-right:auto" }, "TikTok"), status("tiktok")),
+      h("p", { className: "muted" }, "One-time setup: at developers.tiktok.com create an app, add \"Login Kit\" and \"Content Posting API\" (with Direct Post), and register this redirect address: ", h("code", {}, S.tiktok_redirect)),
+      h("div", { className: "row" }, field("Client key", ttKey), field("Client secret", ttSecret), field("New videos are", ttPrivacy)),
+      h("div", { className: "row", style: "margin-top:12px" },
+        h("button", { on: { click: saveTt } }, "Save"),
+        h("button", { className: "primary", on: { click: async () => { if (await saveTt()) location.href = "/connect/tiktok"; } } }, S.accounts.tiktok ? "Reconnect TikTok" : "Connect TikTok"),
+        disconnect("tiktok"))),
+    h("div", { className: "panel" },
+      h("h2", {}, "Instagram Reels"),
+      h("p", { className: "muted" }, "Not available yet. Instagram only accepts videos from a public web address, so it can't take files straight from this computer. For now, post the finished videos from the data/out folder by hand.")));
+}
+
+function renderSettings() {
+  const st = S.settings;
+  const f = {
+    game: text(st.game), keywords: text(st.keywords.join(", ")), hashtags: text(st.hashtags.join(", ")),
+    lookback_hours: text(st.lookback_hours, "", "number"), min_views: text(st.min_views, "", "number"),
+    max_clips_per_run: text(st.max_clips_per_run, "", "number"), max_duration: text(st.max_duration, "", "number"),
+    schedule_minutes: text(st.schedule_minutes, "", "number"),
+    auto_approve: h("input", { type: "checkbox", checked: st.auto_approve, on: { change: () => dirty = true } }),
+    twId: text(st.twitch.client_id), twSecret: secret(st.twitch.client_secret_set),
+  };
+  const list = el => el.value.split(",").map(s => s.trim()).filter(Boolean);
+  const save = () => api("POST", "/api/settings", {
+    game: f.game.value, keywords: list(f.keywords), hashtags: list(f.hashtags),
+    lookback_hours: f.lookback_hours.value, min_views: f.min_views.value, max_clips_per_run: f.max_clips_per_run.value,
+    max_duration: f.max_duration.value, schedule_minutes: f.schedule_minutes.value, auto_approve: f.auto_approve.checked,
+    twitch: { client_id: f.twId.value, client_secret: f.twSecret.value },
+  });
+  $("settings").replaceChildren(
+    h("div", { className: "panel" },
+      h("h2", {}, "What to look for"),
+      h("div", { className: "row", style: "margin-top:10px" },
+        field("Game (Twitch category name)", f.game), field("YouTube title must contain one of", f.keywords), field("Hashtags on posts", f.hashtags)),
+      h("div", { className: "row", style: "margin-top:10px" },
+        field("Only clips newer than (hours)", f.lookback_hours), field("Minimum views", f.min_views),
+        field("Clips to edit per search", f.max_clips_per_run), field("Max clip length (seconds)", f.max_duration))),
+    h("div", { className: "panel" },
+      h("h2", {}, "Autopilot"),
+      h("p", { className: "muted" }, "Works while this app is open on your computer."),
+      h("div", { className: "row" }, field("Search automatically every (minutes, 0 = off)", f.schedule_minutes)),
+      h("label", { className: "check", style: "margin-top:12px" }, f.auto_approve, "Skip review: approve and post every clip automatically")),
+    h("div", { className: "panel" },
+      h("h2", {}, "Twitch access"),
+      h("p", { className: "muted" }, "Needed to search Twitch. Register a free app at dev.twitch.tv/console/apps and paste its ID and secret."),
+      h("div", { className: "row" }, field("Client ID", f.twId), field("Client secret", f.twSecret))),
+    h("button", { className: "primary", on: { click: save } }, "Save settings"));
+}
+
+$("run").addEventListener("click", () => api("POST", "/api/run"));
+$("post").addEventListener("click", () => api("POST", "/api/publish"));
+show();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>

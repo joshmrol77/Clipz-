@@ -3,10 +3,9 @@ name = "clipz"
 version = "0.1.0"
 description = "Find top stream clips from creators you have permission to clip, render them vertical, and publish"
 requires-python = ">=3.11"
-dependencies = ["yt-dlp", "requests"]
+dependencies = ["yt-dlp", "requests", "flask", "google-api-python-client", "google-auth-oauthlib"]
 
 [project.optional-dependencies]
-youtube = ["google-api-python-client", "google-auth-oauthlib"]
 dev = ["pytest"]
 
 [project.scripts]
@@ -18,3 +17,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["clipz*"]
+
+[tool.setuptools.package-data]
+clipz = ["static/*"]

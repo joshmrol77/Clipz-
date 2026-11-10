@@ -5,38 +5,15 @@ import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, db
+from . import config, db, pipeline
 from .db import Clip
 
 
 def cmd_run(cfg, con, args):
     """discover -> download -> render for the top-ranked new clips."""
-    from . import sources
-
     if not cfg.creators:
-        raise SystemExit("no [[creators]] in config.toml - add the channels you're allowed to clip")
-    print("Discovering...")
-    new = sum(db.add(con, c) for c in sources.discover(cfg))
-    print(f"{new} new clip(s) queued")
-    _process(cfg, con, db.by_status(con, "discovered", cfg.max_clips_per_run))
-
-
-def _process(cfg, con, clips):
-    from . import download as dl, render as rn
-
-    for clip in clips:
-        print(f"[{clip.id}] {clip.title!r} ({clip.views} views)")
-        try:
-            src = dl.download(clip, cfg.data_dir / "raw")
-            db.update(con, clip.id, status="downloaded", src_path=str(src))
-            out = rn.render(src, cfg.data_dir / "out" / f"{src.stem}.mp4", clip.title, clip.credit,
-                            cfg.max_duration, cfg.render.get("font", ""))
-            status = "approved" if cfg.auto_approve else "rendered"
-            db.update(con, clip.id, status=status, out_path=str(out), error="")
-            print(f"  -> {out} [{status}]")
-        except Exception as e:
-            db.update(con, clip.id, status="failed", error=str(e)[:500])
-            print(f"  FAILED: {e}")
+        raise SystemExit("no streamers configured - add them in the app or under [[creators]] in config.toml")
+    pipeline.find_and_render(cfg, con)
 
 
 def cmd_add(cfg, con, args):
@@ -48,7 +25,7 @@ def cmd_add(cfg, con, args):
     )
     if not db.add(con, clip):
         raise SystemExit(f"already queued as {clip.id}")
-    _process(cfg, con, [clip])
+    pipeline.process(cfg, con, [clip])
 
 
 def cmd_list(cfg, con, args):
@@ -83,23 +60,17 @@ def cmd_reject(cfg, con, args):
 
 def cmd_retry(cfg, con, args):
     """Re-run download + render for clips that failed (e.g. a network blip)."""
-    _process(cfg, con, db.by_status(con, "failed"))
+    pipeline.process(cfg, con, db.by_status(con, "failed"))
 
 
 def cmd_publish(cfg, con, args):
-    from . import publish
+    pipeline.publish_approved(cfg, con, args.limit)
 
-    clips = db.by_status(con, "approved", args.limit)
-    if not clips:
-        print("nothing approved - see `clipz list --status rendered` and `clipz approve <id>`")
-    for clip in clips:
-        try:
-            url = publish.upload(cfg, clip)
-            db.update(con, clip.id, status="published", published_url=url)
-            print(f"[{clip.id}] published: {url}")
-        except Exception as e:
-            db.update(con, clip.id, error=str(e)[:500])
-            print(f"[{clip.id}] upload FAILED: {e}")
+
+def cmd_app(cfg, con, args):
+    from . import app
+
+    app.serve(args.config, args.port, not args.no_browser)
 
 
 def main(argv=None):
@@ -131,7 +102,12 @@ def main(argv=None):
 
     sub.add_parser("retry", help="re-process failed clips").set_defaults(fn=cmd_retry)
 
-    pb = sub.add_parser("publish", help="upload approved clips to YouTube Shorts")
+    ui = sub.add_parser("app", help="open the Clipz app in your browser")
+    ui.add_argument("--port", type=int, default=8777)
+    ui.add_argument("--no-browser", action="store_true")
+    ui.set_defaults(fn=cmd_app)
+
+    pb = sub.add_parser("publish", help="post approved clips to every connected account")
     pb.add_argument("--limit", type=int, default=3, help="max uploads this run (default 3)")
     pb.set_defaults(fn=cmd_publish)
 
