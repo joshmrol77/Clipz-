@@ -1,0 +1,7 @@
+__pycache__/
+*.egg-info/
+.venv/
+config.toml
+data/
+client_secret*.json
+youtube_token.json

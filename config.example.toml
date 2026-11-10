@@ -1,0 +1,34 @@
+# Copy to config.toml and fill in.
+
+game = "Grand Theft Auto VI"      # Twitch category name; also used as a Kick category filter
+keywords = ["gta"]                # YouTube videos must contain one of these in the title
+lookback_hours = 24               # only consider clips newer than this
+min_views = 50                    # ignore clips below this view count
+max_clips_per_run = 10            # how many of the top-ranked clips to download + render per run
+max_duration = 60                 # seconds; longer clips are trimmed
+auto_approve = false              # true = rendered clips skip the review step and are publishable immediately
+data_dir = "data"
+
+# Creators you are allowed to clip (their clipping program, written permission, or your own
+# channels). Discovery ONLY looks at these channels.
+[[creators]]
+platform = "twitch"               # twitch | kick | youtube
+channel = "some_streamer"         # twitch login, kick slug, or youtube channel URL / @handle
+credit = "twitch.tv/some_streamer"  # shown on the video and in the description
+
+# [[creators]]
+# platform = "youtube"
+# channel = "@SomeChannel"
+# credit = "youtube.com/@SomeChannel"
+
+[twitch]                          # https://dev.twitch.tv/console/apps -> register an app
+client_id = ""
+client_secret = ""
+
+[render]
+font = ""                         # path to a .ttf/.otf; empty = auto-detect a bold system font
+hashtags = ["GTA6", "GTAVI", "gaming"]
+
+[youtube_upload]                  # Google Cloud console -> YouTube Data API v3 -> OAuth "Desktop app" client
+client_secrets_file = "client_secret.json"
+privacy = "private"               # private | unlisted | public
