@@ -10,7 +10,7 @@ from clipz.app import create_app
 from clipz.db import Clip
 from clipz.publish import tiktok
 
-JSON = {"content_type": "application/json"}
+JSON = {"content_type": "application/json", "headers": {"X-Clipz": "1"}}
 
 
 @pytest.fixture
@@ -61,7 +61,8 @@ def test_settings_keep_secrets_private_and_blank_does_not_erase(env):
 def test_rejects_other_hosts_and_non_json_posts(env):
     client, _ = env
     assert client.get("/api/state", base_url="http://evil.example").status_code == 403
-    assert client.post("/api/run", data="x=1").status_code == 415
+    assert client.post("/api/run", data="x=1", headers={"X-Clipz": "1"}).status_code == 415
+    assert client.post("/api/run", data="{}", content_type="application/json").status_code == 403  # another site
 
 
 def test_approve_reject_flow(env):
@@ -124,12 +125,13 @@ def test_layout_change_validates_and_upload_is_origin_checked(env):
     r = post(client, "/api/clips/twitch:a/layout", {"layout": "split"})
     assert r.status_code == 400 and "gameplay" in r.get_json()["error"]
 
-    def upload(name, origin):
+    def upload(name, headers):
         return client.post("/api/backgrounds", data={"file": (io.BytesIO(b"x"), name)},
-                           content_type="multipart/form-data", headers={"Origin": origin})
-    assert upload("game.mp4", "http://evil.example").status_code == 403
-    assert upload("notes.txt", "http://127.0.0.1:8777").status_code == 400
-    assert upload("../../game.mp4", "http://127.0.0.1:8777").status_code == 200
+                           content_type="multipart/form-data", headers=headers)
+    ours = {"X-Clipz": "1"}
+    assert upload("game.mp4", {}).status_code == 403
+    assert upload("notes.txt", ours).status_code == 400
+    assert upload("../../game.mp4", ours).status_code == 200
     assert client.get("/api/state").get_json()["backgrounds"] == ["game.mp4"]
     assert (tmp / "data" / "backgrounds" / "game.mp4").exists()
 
@@ -199,3 +201,34 @@ def test_instagram_connect_and_reel_upload_sequence(tmp_path, monkeypatch):
     assert instagram.upload(cfg, clip, sleep=lambda s: None) == "https://instagram.com/reel/abc"
     order = [u.rsplit("/", 1)[-1] for m, u in calls if m == "POST"]
     assert order == ["media", "CONT", "media_publish"]
+
+
+def test_hosted_mode_needs_password_and_builds_public_redirects(tmp_path, monkeypatch):
+    from clipz import app as appmod
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit, match="password"):
+        appmod.serve(port=1, host="0.0.0.0", password="")
+    client = create_app(str(tmp_path / "config.toml"), port=8777, password="hunter2").test_client()
+    base = {"base_url": "http://clipz.example", "headers": {"X-Forwarded-Proto": "https"}}
+    assert client.get("/api/state", **base).status_code == 401
+    assert client.get("/", **base).headers["Location"].endswith("/login")
+    assert client.post("/api/run", data="{}", content_type="application/json",
+                       base_url="http://clipz.example", headers={"X-Clipz": "1"}).status_code == 401
+    assert b"Wrong password" in client.post("/login", data={"password": "nope"}, **base).data
+    assert client.post("/login", data={"password": "hunter2"}, **base).status_code == 302
+    state = client.get("/api/state", **base).get_json()
+    assert state["hosted"] is True
+    assert state["youtube_redirect"] == "https://clipz.example/oauth/youtube/callback"
+    assert state["tiktok_redirect"] == "https://clipz.example/oauth/tiktok/callback"
+
+
+def test_youtube_authorize_url_uses_redirect_and_asks_for_offline_access(tmp_path):
+    from urllib.parse import parse_qs, urlparse
+    from clipz.publish import youtube
+    cfg = config.Config(data_dir=tmp_path, youtube_upload={"client_id": "cid", "client_secret": "sec"})
+    url, state, _ = youtube.authorize_url(cfg, "https://clipz.example/oauth/youtube/callback")
+    q = parse_qs(urlparse(url).query)
+    assert q["client_id"] == ["cid"] and q["access_type"] == ["offline"] and q["state"] == [state]
+    assert q["redirect_uri"] == ["https://clipz.example/oauth/youtube/callback"]
+    with pytest.raises(RuntimeError, match="client ID"):
+        youtube.authorize_url(config.Config(data_dir=tmp_path), "https://x/cb")

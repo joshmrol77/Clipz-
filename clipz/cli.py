@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -70,7 +71,8 @@ def cmd_publish(cfg, con, args):
 def cmd_app(cfg, con, args):
     from . import app
 
-    app.serve(args.config, args.port, not args.no_browser)
+    app.serve(args.config, args.port, not args.no_browser, args.host,
+              args.password or os.environ.get("CLIPZ_PASSWORD", ""))
 
 
 def main(argv=None):
@@ -103,7 +105,9 @@ def main(argv=None):
     sub.add_parser("retry", help="re-process failed clips").set_defaults(fn=cmd_retry)
 
     ui = sub.add_parser("app", help="open the Clipz app in your browser")
-    ui.add_argument("--port", type=int, default=8777)
+    ui.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8777)))
+    ui.add_argument("--host", default="127.0.0.1", help="0.0.0.0 to host it for other devices (needs a password)")
+    ui.add_argument("--password", default="", help="require this password to use the app (or set CLIPZ_PASSWORD)")
     ui.add_argument("--no-browser", action="store_true")
     ui.set_defaults(fn=cmd_app)
 

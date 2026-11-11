@@ -44,6 +44,21 @@ layout used for new clips is chosen in Settings.
 Autopilot (Settings) repeats the search every N minutes and can skip review entirely. It
 runs only while the app is open.
 
+## Use it from a phone (host it on a server)
+
+A phone can't run Clipz itself (it needs Python and ffmpeg), but it can use Clipz in its
+browser if the app runs on a server. The included `Dockerfile` is for that:
+
+1. On a hosting service that builds a GitHub repository's Dockerfile and offers a persistent
+   disk, create a service from this repository.
+2. Set the environment variable `CLIPZ_PASSWORD` to a long password. Clipz refuses to start
+   on a server without one, because the app holds your keys and can post to your accounts.
+3. Attach a persistent disk at `/srv/data` so settings, sign-ins and videos survive restarts.
+4. Open the service's `https://` address on your phone and sign in with the password.
+
+Hosted this way it also runs around the clock, so autopilot keeps working with no computer on.
+The Dockerfile has not been built yet - treat the first deploy as a test.
+
 ## One-time account setup
 
 Each platform makes you register a free developer app before software may act for you.
@@ -51,8 +66,8 @@ Each platform makes you register a free developer app before software may act fo
 - **Twitch** (to search): <https://dev.twitch.tv/console/apps> -> register an app -> copy
   the client ID and secret into Settings.
 - **YouTube** (to post): Google Cloud Console -> new project -> enable *YouTube Data API v3*
-  -> create an OAuth client of type *Desktop app* -> paste ID and secret in Accounts ->
-  **Connect YouTube**. New projects can upload about 6 videos a day until you request more quota.
+  -> create an OAuth client of type *Web application* -> add the redirect address shown in
+  Accounts -> paste ID and secret -> **Connect YouTube**. New projects can upload about 6 videos a day until you request more quota.
 - **TikTok** (to post): <https://developers.tiktok.com> -> create an app with *Login Kit* and
   *Content Posting API* (Direct Post) -> register the redirect address shown in Accounts ->
   paste key and secret -> **Connect TikTok**. Until TikTok audits your app, posts arrive as

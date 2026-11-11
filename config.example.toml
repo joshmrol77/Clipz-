@@ -38,7 +38,7 @@ font = ""                         # path to a .ttf/.otf; empty = auto-detect a b
 hashtags = ["GTA6", "GTAVI", "gaming"]
 layout = "framed"                # framed | full | split (split needs a video in data/backgrounds/)
 
-[youtube_upload]                  # Google Cloud console -> YouTube Data API v3 -> OAuth "Desktop app" client
+[youtube_upload]                  # Google Cloud console -> YouTube Data API v3 -> OAuth "Web application" client
 client_id = ""
 client_secret = ""
 privacy = "private"               # private | unlisted | public

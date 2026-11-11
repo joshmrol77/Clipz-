@@ -1,5 +1,5 @@
 """Upload a rendered clip to YouTube Shorts with the official Data API (OAuth desktop flow).
-Connecting opens a browser to authorise your channel; the token is cached afterwards."""
+Connecting sends you to Google to authorise your channel; the token is cached afterwards."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,11 +29,11 @@ def _libs():
     try:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
+        from google_auth_oauthlib.flow import Flow
         from googleapiclient.discovery import build
     except ImportError:
         raise RuntimeError("YouTube upload needs extra packages: pip install -e .")
-    return Request, Credentials, InstalledAppFlow, build
+    return Request, Credentials, Flow, build
 
 
 def _token_path(cfg: Config) -> Path:
@@ -48,29 +48,38 @@ def disconnect(cfg: Config) -> None:
     _token_path(cfg).unlink(missing_ok=True)
 
 
-def connect(cfg: Config) -> None:
-    """Open a browser on this machine and wait for the user to authorise their channel."""
-    _, _, InstalledAppFlow, _ = _libs()
+def _flow(cfg: Config, redirect_uri: str):
+    _, _, Flow, _ = _libs()
     yt = cfg.youtube_upload
-    if yt.get("client_id") and yt.get("client_secret"):
-        flow = InstalledAppFlow.from_client_config({"installed": {
-            "client_id": yt["client_id"], "client_secret": yt["client_secret"],
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": ["http://localhost"],
-        }}, SCOPES)
-    elif Path(yt.get("client_secrets_file", "client_secret.json")).exists():
-        flow = InstalledAppFlow.from_client_secrets_file(yt.get("client_secrets_file", "client_secret.json"), SCOPES)
-    else:
+    if not (yt.get("client_id") and yt.get("client_secret")):
         raise RuntimeError("enter your Google OAuth client ID and secret first")
-    creds = flow.run_local_server(port=0)
-    _token_path(cfg).write_text(creds.to_json())
+    return Flow.from_client_config({"web": {
+        "client_id": yt["client_id"], "client_secret": yt["client_secret"],
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "redirect_uris": [redirect_uri],
+    }}, SCOPES, redirect_uri=redirect_uri)
+
+
+def authorize_url(cfg: Config, redirect_uri: str) -> tuple[str, str, str | None]:
+    """Returns (url to send the user to, state, code_verifier)."""
+    flow = _flow(cfg, redirect_uri)
+    # offline + consent so Google gives us a refresh token and posting keeps working unattended
+    url, state = flow.authorization_url(access_type="offline", prompt="consent")
+    return url, state, getattr(flow, "code_verifier", None)
+
+
+def finish_connect(cfg: Config, code: str, verifier: str | None, redirect_uri: str) -> None:
+    flow = _flow(cfg, redirect_uri)
+    flow.code_verifier = verifier
+    flow.fetch_token(code=code)
+    _token_path(cfg).write_text(flow.credentials.to_json())
 
 
 def _service(cfg: Config):
     Request, Credentials, _, build = _libs()
     if not connected(cfg):
-        connect(cfg)
+        raise RuntimeError("YouTube is not connected - connect it in the app's Accounts tab")
     creds = Credentials.from_authorized_user_file(_token_path(cfg), SCOPES)
     if not creds.valid:
         creds.refresh(Request())

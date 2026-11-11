@@ -1,15 +1,22 @@
-"""Local web app: a few buttons on top of the same pipeline the command line uses.
-Listens on 127.0.0.1 only - it holds your API keys, so it is not meant to be exposed."""
+"""Web app: a few buttons on top of the same pipeline the command line uses.
+
+Two ways to run it. On your own computer (no password): only this machine's browser is let in.
+Hosted on a server so you can use it from a phone: a password is required, because the app
+holds your API keys and can post to your accounts."""
 from __future__ import annotations
 
+import hmac
+import secrets
 import threading
 import time
 import webbrowser
+from datetime import timedelta
 from collections import deque
 from dataclasses import asdict
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, redirect, request, send_file
+from flask import Flask, abort, jsonify, redirect, request, send_file, session
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from werkzeug.utils import secure_filename
 
@@ -19,14 +26,33 @@ from .publish import instagram, tiktok, youtube
 
 SECRET_FIELDS = {"twitch": ["client_secret"], "youtube_upload": ["client_secret"], "tiktok": ["client_secret"]}
 STATIC = Path(__file__).parent / "static"
+LOGIN_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
+<title>Clipz</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1115;color:#e8eaf0;
+font:16px system-ui,sans-serif}form{display:grid;gap:12px;width:min(320px,calc(100vw - 32px))}input,button{font:inherit;
+padding:12px;border-radius:8px;border:1px solid #2a2f3a;background:#181b22;color:inherit}button{background:#7c5cff;
+border-color:#7c5cff;font-weight:600}p{color:#e5484d;margin:0}</style>
+<form method=post><h1 style="margin:0">Clipz</h1>__ERROR__
+<input type=password name=password placeholder=Password autofocus required><button>Sign in</button></form>"""
 
 
-def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
+def create_app(config_path: str = "config.toml", port: int = 8777, password: str = "") -> Flask:
     app = Flask(__name__, static_folder=None)
+    if password:
+        # Hosted: we sit behind the host's HTTPS proxy, and sign-in is remembered with a cookie.
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+        key_file = config.load(config_path).data_dir / "secret_key"
+        if not key_file.exists():
+            key_file.write_text(secrets.token_hex(32))
+        app.secret_key = key_file.read_text()
+        app.permanent_session_lifetime = timedelta(days=30)
+        app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
     log: deque[str] = deque(maxlen=200)
     busy = threading.Lock()
-    state = {"job": "", "last_auto_run": time.time(), "tiktok_pending": None}
-    tiktok_redirect = f"http://127.0.0.1:{port}/oauth/tiktok/callback"
+    state = {"job": "", "last_auto_run": time.time(), "tiktok_pending": None, "youtube_pending": None}
+
+    def redirect_uri(platform: str) -> str:
+        """Where a social platform sends the user back to - this app, at whatever address it's reached on."""
+        return f"{request.url_root.rstrip('/')}/oauth/{platform}/callback"
 
     def cfg():
         return config.load(config_path)
@@ -71,17 +97,35 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
 
     @app.before_request
     def guard():
-        # Only this machine's browser, and only our own page, may talk to the app.
-        if request.host not in (f"127.0.0.1:{port}", f"localhost:{port}"):
-            abort(403)
+        if password:
+            if request.endpoint == "login":
+                return
+            if not session.get("ok"):
+                return (jsonify(error="Signed out - reload the page and sign in again."), 401) \
+                    if request.path.startswith("/api/") else redirect("/login")
+        elif request.host not in (f"127.0.0.1:{port}", f"localhost:{port}"):
+            abort(403)  # no password set: only this machine's own browser may talk to the app
         if request.method == "GET":
             return
-        if request.endpoint == "upload_background":
-            # File uploads can't be JSON, so check the request came from our own page instead.
-            if request.headers.get("Origin") not in (f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
-                abort(403)
-        elif not request.is_json:
+        # Only our own page can attach this header, so other websites can't press our buttons.
+        if request.headers.get("X-Clipz") != "1":
+            abort(403)
+        if request.endpoint != "upload_background" and not request.is_json:
             abort(415)
+
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        if not password:
+            return redirect("/")
+        error = ""
+        if request.method == "POST":
+            if hmac.compare_digest(request.form.get("password", "").encode(), password.encode()):
+                session.permanent = True
+                session["ok"] = True
+                return redirect("/")
+            time.sleep(1)  # slow down password guessing
+            error = "<p>Wrong password.</p>"
+        return LOGIN_PAGE.replace("__ERROR__", error)
 
     @app.get("/")
     def index():
@@ -113,7 +157,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
             creators=[asdict(x) for x in c.creators], clips=clips, waiting=waiting,
             settings=settings, accounts={n: m.connected(c) for n, m in publish.PLATFORMS.items()},
             layouts=render.LAYOUTS, backgrounds=pipeline.backgrounds(c),
-            tiktok_redirect=tiktok_redirect, job=state["job"], log=list(log)[-60:],
+            tiktok_redirect=redirect_uri("tiktok"), youtube_redirect=redirect_uri("youtube"),
+            hosted=bool(password), job=state["job"], log=list(log)[-60:],
         )
 
     @app.post("/api/creators")
@@ -240,18 +285,33 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
             abort(404)
         return send_file(Path(clip.out_path).resolve(), mimetype="video/mp4", conditional=True)
 
-    @app.post("/api/connect/youtube")
+    @app.get("/connect/youtube")
     def connect_youtube():
-        def job(c, con):
-            say("A browser window is opening - sign in to the YouTube channel you want to post to.")
-            youtube.connect(c)
-            say("YouTube connected.")
-        return jsonify(started=start_job("Connecting YouTube", job))
+        try:
+            url, st, verifier = youtube.authorize_url(cfg(), redirect_uri("youtube"))
+        except RuntimeError as e:
+            say(str(e))
+            return redirect("/#accounts")
+        state["youtube_pending"] = (st, verifier)
+        return redirect(url)
+
+    @app.get("/oauth/youtube/callback")
+    def youtube_callback():
+        pending, state["youtube_pending"] = state["youtube_pending"], None
+        if not pending or request.args.get("state") != pending[0] or "code" not in request.args:
+            say(f"YouTube connect failed: {request.args.get('error', 'unexpected response')}")
+        else:
+            try:
+                youtube.finish_connect(cfg(), request.args["code"], pending[1], redirect_uri("youtube"))
+                say("YouTube connected.")
+            except Exception as e:
+                say(f"YouTube connect failed: {e}")
+        return redirect("/#accounts")
 
     @app.get("/connect/tiktok")
     def connect_tiktok():
         try:
-            url, st, verifier = tiktok.authorize_url(cfg(), tiktok_redirect)
+            url, st, verifier = tiktok.authorize_url(cfg(), redirect_uri("tiktok"))
         except RuntimeError as e:
             say(str(e))
             return redirect("/#accounts")
@@ -265,7 +325,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
             say(f"TikTok connect failed: {request.args.get('error_description', 'unexpected response')}")
         else:
             try:
-                tiktok.finish_connect(cfg(), request.args["code"], pending[1], tiktok_redirect)
+                tiktok.finish_connect(cfg(), request.args["code"], pending[1], redirect_uri("tiktok"))
                 say("TikTok connected.")
             except Exception as e:
                 say(str(e))
@@ -291,11 +351,15 @@ def create_app(config_path: str = "config.toml", port: int = 8777) -> Flask:
     return app
 
 
-def serve(config_path: str = "config.toml", port: int = 8777, open_browser: bool = True) -> None:
-    app = create_app(config_path, port)
+def serve(config_path: str = "config.toml", port: int = 8777, open_browser: bool = True,
+          host: str = "127.0.0.1", password: str = "") -> None:
+    local = host in ("127.0.0.1", "localhost")
+    if not local and not password:
+        raise SystemExit("Refusing to start: reachable from other devices but no password set. "
+                         "Set the CLIPZ_PASSWORD environment variable (or pass --password).")
+    app = create_app(config_path, port, password)
     app.start_scheduler()
-    url = f"http://127.0.0.1:{port}"
-    print(f"Clipz is running at {url}  (Ctrl+C to stop)")
-    if open_browser:
-        threading.Timer(1.0, webbrowser.open, [url]).start()
-    app.run(host="127.0.0.1", port=port, threaded=True)
+    print(f"Clipz is running on port {port}" + ("  (password required)" if password else "") + "  (Ctrl+C to stop)")
+    if open_browser and local:
+        threading.Timer(1.0, webbrowser.open, [f"http://127.0.0.1:{port}"]).start()
+    app.run(host=host, port=port, threaded=True)

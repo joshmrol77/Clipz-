@@ -116,7 +116,8 @@ function h(tag, props = {}, ...kids) {
 const $ = id => document.getElementById(id);
 
 async function api(method, url, body) {
-  const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  const r = await fetch(url, { method, headers: { "Content-Type": "application/json", "X-Clipz": "1" }, body: JSON.stringify(body || {}) });
+  if (r.status === 401) return location.reload();
   const data = await r.json().catch(() => ({}));
   if (!r.ok) alert(data.error || "Something went wrong (" + r.status + ")");
   else if (data.started === false) alert("Clipz is busy with another task - try again when it finishes.");
@@ -127,6 +128,7 @@ async function api(method, url, body) {
 
 async function refresh() {
   const r = await fetch("/api/state");
+  if (r.status === 401) return location.reload();
   S = await r.json();
   $("job").textContent = S.job ? S.job + "…" : "";
   $("run").disabled = $("post").disabled = !!S.job;
@@ -231,7 +233,7 @@ async function uploadBackground(file) {
   if (!file) return;
   const form = new FormData();
   form.append("file", file);
-  const r = await fetch("/api/backgrounds", { method: "POST", body: form });
+  const r = await fetch("/api/backgrounds", { method: "POST", headers: { "X-Clipz": "1" }, body: form });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) return alert(data.error || "Upload failed (" + r.status + ")");
   pick.background = data.name;
@@ -304,11 +306,11 @@ function renderAccounts() {
   $("accounts").replaceChildren(
     h("div", { className: "panel" },
       h("div", { className: "row" }, h("h2", { style: "margin-right:auto" }, "YouTube Shorts"), status("youtube")),
-      h("p", { className: "muted" }, "One-time setup: in Google Cloud Console create a project, enable \"YouTube Data API v3\", then create an OAuth client of type \"Desktop app\" and paste its ID and secret here."),
+      h("p", { className: "muted" }, "One-time setup: in Google Cloud Console create a project, enable \"YouTube Data API v3\", then create an OAuth client of type \"Web application\", add this address under \"Authorized redirect URIs\", and paste the client's ID and secret here: ", h("code", {}, S.youtube_redirect)),
       h("div", { className: "row" }, field("Client ID", ytId), field("Client secret", ytSecret), field("New videos are", ytPrivacy)),
       h("div", { className: "row", style: "margin-top:12px" },
         h("button", { on: { click: saveYt } }, "Save"),
-        h("button", { className: "primary", on: { click: async () => { if (await saveYt()) api("POST", "/api/connect/youtube"); } } }, S.accounts.youtube ? "Reconnect YouTube" : "Connect YouTube"),
+        h("button", { className: "primary", on: { click: async () => { if (await saveYt()) location.href = "/connect/youtube"; } } }, S.accounts.youtube ? "Reconnect YouTube" : "Connect YouTube"),
         disconnect("youtube"))),
     h("div", { className: "panel" },
       h("div", { className: "row" }, h("h2", { style: "margin-right:auto" }, "TikTok"), status("tiktok")),
