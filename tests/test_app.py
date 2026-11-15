@@ -232,3 +232,12 @@ def test_youtube_authorize_url_uses_redirect_and_asks_for_offline_access(tmp_pat
     assert q["redirect_uri"] == ["https://clipz.example/oauth/youtube/callback"]
     with pytest.raises(RuntimeError, match="client ID"):
         youtube.authorize_url(config.Config(data_dir=tmp_path), "https://x/cb")
+
+
+def test_home_screen_icon_and_manifest_load_before_sign_in(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    client = create_app(str(tmp_path / "config.toml"), port=8777, password="pw").test_client()
+    assert client.get("/static/manifest.webmanifest").get_json()["display"] == "standalone"
+    assert client.get("/static/icon-512.png").mimetype == "image/png"
+    assert client.get("/static/app.py").status_code == 404          # only the listed files are served
+    assert client.get("/static/index.html").status_code == 404      # the app itself still needs sign-in

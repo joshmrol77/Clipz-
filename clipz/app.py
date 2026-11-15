@@ -27,7 +27,8 @@ from .publish import instagram, tiktok, youtube
 SECRET_FIELDS = {"twitch": ["client_secret"], "youtube_upload": ["client_secret"], "tiktok": ["client_secret"]}
 STATIC = Path(__file__).parent / "static"
 LOGIN_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
-<title>Clipz</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1115;color:#e8eaf0;
+<title>Clipz</title><link rel=manifest href=/static/manifest.webmanifest>
+<link rel=apple-touch-icon href=/static/icon-192.png><meta name=apple-mobile-web-app-capable content=yes><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1115;color:#e8eaf0;
 font:16px system-ui,sans-serif}form{display:grid;gap:12px;width:min(320px,calc(100vw - 32px))}input,button{font:inherit;
 padding:12px;border-radius:8px;border:1px solid #2a2f3a;background:#181b22;color:inherit}button{background:#7c5cff;
 border-color:#7c5cff;font-weight:600}p{color:#e5484d;margin:0}</style>
@@ -98,8 +99,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
     @app.before_request
     def guard():
         if password:
-            if request.endpoint == "login":
-                return
+            if request.endpoint in ("login", "static_file"):
+                return  # the sign-in page and the home-screen icon must load before signing in
             if not session.get("ok"):
                 return (jsonify(error="Signed out - reload the page and sign in again."), 401) \
                     if request.path.startswith("/api/") else redirect("/login")
@@ -126,6 +127,13 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             time.sleep(1)  # slow down password guessing
             error = "<p>Wrong password.</p>"
         return LOGIN_PAGE.replace("__ERROR__", error)
+
+    @app.get("/static/<name>")
+    def static_file(name):
+        allowed = {"manifest.webmanifest": "application/manifest+json", "icon-192.png": "image/png", "icon-512.png": "image/png"}
+        if name not in allowed:
+            abort(404)
+        return send_file(STATIC / name, mimetype=allowed[name])
 
     @app.get("/")
     def index():
