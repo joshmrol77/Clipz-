@@ -6,6 +6,27 @@ import yt_dlp
 from yt_dlp.utils import download_range_func
 
 from .db import Clip
+from .render import ffmpeg
+
+
+def fetch_video(url: str, dest_dir: Path, name: str, max_seconds: int = 180) -> Path:
+    """Download the first `max_seconds` of any video link yt-dlp understands (or a direct
+    .mp4 link) - used for gameplay backgrounds."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(name).stem
+    opts = {
+        "quiet": True, "no_warnings": True, "noplaylist": True, "overwrites": True,
+        "outtmpl": str(dest_dir / f"{stem}.%(ext)s"),
+        "format": "bv*[height<=1080]+ba/b[height<=1080]/b",
+        "merge_output_format": "mp4", "ffmpeg_location": ffmpeg(),
+        "download_ranges": download_range_func(None, [(0, max_seconds)]),
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([url])
+    path = dest_dir / f"{stem}.mp4"
+    if not path.exists():
+        raise RuntimeError("couldn't download a video from that link")
+    return path
 
 
 def download(clip: Clip, dest_dir: Path) -> Path:
@@ -18,6 +39,7 @@ def download(clip: Clip, dest_dir: Path) -> Path:
         "format": "bv*[height<=1080]+ba/b[height<=1080]/b",
         "merge_output_format": "mp4",
         "overwrites": True,
+        "ffmpeg_location": ffmpeg(),
     }
     if clip.start is not None and clip.end is not None:
         opts["download_ranges"] = download_range_func(None, [(clip.start, clip.end)])

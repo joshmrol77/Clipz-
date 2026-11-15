@@ -1,0 +1,6 @@
+yt-dlp
+requests
+flask
+imageio-ffmpeg
+psycopg[binary]
+vercel

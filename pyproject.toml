@@ -3,7 +3,14 @@ name = "clipz"
 version = "0.1.0"
 description = "Find top stream clips from creators you have permission to clip, render them vertical, and publish"
 requires-python = ">=3.11"
-dependencies = ["yt-dlp", "requests", "flask", "google-api-python-client", "google-auth-oauthlib"]
+dependencies = [
+    "yt-dlp",
+    "requests",
+    "flask",
+    "imageio-ffmpeg",     # ships a known-good ffmpeg, so nothing else needs installing
+    "psycopg[binary]",    # Postgres, for the cloud version
+    "vercel",             # Vercel Blob storage, for the cloud version
+]
 
 [project.optional-dependencies]
 dev = ["pytest"]
@@ -19,4 +26,4 @@ build-backend = "setuptools.build_meta"
 include = ["clipz*"]
 
 [tool.setuptools.package-data]
-clipz = ["static/*"]
+clipz = ["static/*", "fonts/*"]

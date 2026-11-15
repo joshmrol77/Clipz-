@@ -2,6 +2,9 @@
 credit on screen and loudness-normalised audio."""
 from __future__ import annotations
 
+import functools
+import os
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -9,12 +12,29 @@ from pathlib import Path
 
 W, H = 1080, 1920
 FONT_CANDIDATES = [
+    str(Path(__file__).parent / "fonts" / "InterDisplay-Bold.otf"),  # shipped with Clipz
     "/usr/share/fonts/opentype/inter/InterDisplay-Bold.otf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
     "C:/Windows/Fonts/arialbd.ttf",
 ]
+
+
+@functools.cache
+def ffmpeg() -> str:
+    """The ffmpeg program to use: CLIPZ_FFMPEG if set, else the copy that ships inside the
+    imageio-ffmpeg package (a known-good build, and the only option on Vercel), else the system one."""
+    if os.environ.get("CLIPZ_FFMPEG"):
+        return os.environ["CLIPZ_FFMPEG"]
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        found = shutil.which("ffmpeg")
+        if not found:
+            raise RuntimeError("ffmpeg not found - pip install imageio-ffmpeg, or install ffmpeg 6.1+")
+        return found
 
 
 def find_font(configured: str = "") -> str:
@@ -35,6 +55,8 @@ LAYOUTS = {
     "split": "Split - clip on top, gameplay video on the bottom half",
 }
 BACKGROUND_TYPES = (".mp4", ".mov", ".webm", ".mkv")
+# Cloud functions get one CPU and five minutes, so encode faster there at a slightly larger file size.
+PRESET = os.environ.get("CLIPZ_X264_PRESET") or ("veryfast" if os.environ.get("VERCEL") else "medium")
 SAFE_BOTTOM = 300  # keep text clear of the like/comment/caption UI the apps draw over the video
 
 
@@ -43,7 +65,7 @@ def _fill(w: int, h: int) -> str:
 
 
 def filtergraph(layout: str, font: str, title_file: str, credit_file: str) -> str:
-    text = f"fontfile='{_esc(font)}':fontcolor=white:borderw=6:bordercolor=black:text_align=C:x=(w-text_w)/2"
+    text = f"fontfile='{_esc(font)}':fontcolor=white:borderw=6:bordercolor=black:text_align=C:expansion=none:x=(w-text_w)/2"
     title = f"drawtext={text}:textfile='{_esc(title_file)}':fontsize=72:line_spacing=14"
     credit = f"drawtext={text}:textfile='{_esc(credit_file)}':fontsize=44"
     if layout == "framed":
@@ -86,11 +108,11 @@ def render(src: Path, out: Path, title: str, credit: str, max_duration: int = 60
         title_file.write_text(headline, encoding="utf-8")
         credit_file.write_text(credit or " ", encoding="utf-8")
         cmd = [
-            "ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *inputs, "-t", str(max_duration),
+            ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", *inputs, "-t", str(max_duration),
             "-filter_complex", filtergraph(layout, find_font(font), str(title_file), str(credit_file)),
             "-map", "[v]", "-map", "0:a?",
             "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-            "-r", "30", "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+            "-r", "30", "-c:v", "libx264", "-preset", PRESET, "-crf", "20",
             "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart",
             str(out),
         ]

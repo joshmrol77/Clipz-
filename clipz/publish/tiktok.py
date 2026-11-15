@@ -7,7 +7,6 @@ Until TikTok has audited your developer app, it only accepts privacy level SELF_
 from __future__ import annotations
 
 import hashlib
-import json
 import secrets
 import time
 from pathlib import Path
@@ -15,6 +14,7 @@ from urllib.parse import urlencode
 
 import requests
 
+from . import tokens
 from ..config import Config
 from ..db import Clip
 
@@ -26,16 +26,12 @@ MAX_SINGLE_CHUNK = 64 * 1024 * 1024
 CHUNK = 10 * 1024 * 1024
 
 
-def _token_path(cfg: Config) -> Path:
-    return cfg.data_dir / "tiktok_token.json"
-
-
 def connected(cfg: Config) -> bool:
-    return _token_path(cfg).exists()
+    return tokens.load(cfg, NAME) is not None
 
 
 def disconnect(cfg: Config) -> None:
-    _token_path(cfg).unlink(missing_ok=True)
+    tokens.delete(cfg, NAME)
 
 
 def _keys(cfg: Config) -> tuple[str, str]:
@@ -66,7 +62,7 @@ def _token_request(cfg: Config, **fields) -> dict:
     if "access_token" not in data:
         raise RuntimeError(f"TikTok login failed: {data.get('error_description') or data}")
     data["expires_at"] = time.time() + int(data.get("expires_in", 0))
-    _token_path(cfg).write_text(json.dumps(data))
+    tokens.save(cfg, NAME, data)
     return data
 
 
@@ -78,7 +74,7 @@ def finish_connect(cfg: Config, code: str, verifier: str, redirect_uri: str) -> 
 def _access_token(cfg: Config) -> str:
     if not connected(cfg):
         raise RuntimeError("TikTok is not connected")
-    tok = json.loads(_token_path(cfg).read_text())
+    tok = tokens.load(cfg, NAME)
     if tok["expires_at"] < time.time() + 60:
         tok = _token_request(cfg, grant_type="refresh_token", refresh_token=tok["refresh_token"])
     return tok["access_token"]

@@ -1,12 +1,19 @@
 """Settings come from three layers, later ones winning:
-defaults  <-  config.toml (optional, hand-edited)  <-  <data_dir>/settings.json (written by the app)
+defaults  <-  config.toml (optional, hand-edited)  <-  settings saved by the app (in the database)
+
+Where things are kept:
+- database: Postgres when DATABASE_URL (or POSTGRES_URL) is set, else <data_dir>/clipz.sqlite
+- data_dir: working files. On Vercel only /tmp is writable, so it defaults to /tmp/clipz there.
 """
 from __future__ import annotations
 
 import json
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from . import db
 
 PLATFORMS = ("twitch", "kick", "youtube")
 SECTIONS = ("twitch", "render", "youtube_upload", "tiktok")
@@ -55,6 +62,14 @@ class Config:
     render: dict = field(default_factory=dict)
     youtube_upload: dict = field(default_factory=dict)
     tiktok: dict = field(default_factory=dict)
+    database: str = ""                 # Postgres URL or SQLite path; filled in by load()
+    _con: object = field(default=None, repr=False, compare=False)
+
+    def connect(self):
+        """The database connection for this Config (opened once, then reused)."""
+        if self._con is None:
+            self._con = db.connect(self.database or self.data_dir / "clipz.sqlite")
+        return self._con
 
     def creator_for(self, clip) -> Creator | None:
         for c in self.creators:
@@ -71,36 +86,48 @@ class Config:
         return bool(self.game) and not (creator and creator.all_content)
 
     @property
-    def db_path(self) -> Path:
-        return self.data_dir / "clipz.sqlite"
+    def db_path(self):
+        return self.database or self.data_dir / "clipz.sqlite"
 
-    @property
-    def settings_path(self) -> Path:
-        return self.data_dir / "settings.json"
+
+def database_url() -> str:
+    return os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or ""
+
+
+def default_data_dir() -> str:
+    return os.environ.get("CLIPZ_DATA_DIR") or ("/tmp/clipz" if os.environ.get("VERCEL") else "data")
+
+
+def _merge(into: dict, changes: dict) -> dict:
+    """Sections merge key by key; everything else replaces."""
+    for key, value in changes.items():
+        if key in SECTIONS:
+            into[key] = {**into.get(key, {}), **value}
+        else:
+            into[key] = value
+    return into
 
 
 def load(path: str | Path = "config.toml") -> Config:
     path = Path(path)
     raw = tomllib.loads(path.read_text()) if path.exists() else {}
-    data_dir = Path(raw.pop("data_dir", "data"))
+    data_dir = Path(raw.pop("data_dir", default_data_dir()))
     data_dir.mkdir(parents=True, exist_ok=True)
-    settings = data_dir / "settings.json"
-    if settings.exists():
-        for key, value in json.loads(settings.read_text()).items():
-            if key in SECTIONS:
-                raw[key] = {**raw.get(key, {}), **value}
-            else:
-                raw[key] = value
+    cfg = Config(data_dir=data_dir, database=database_url())
+    con = cfg.connect()
+    saved = db.kv_get(con, "settings")
+    legacy = data_dir / "settings.json"   # settings saved by an older version
+    if saved is None and legacy.exists():
+        saved = json.loads(legacy.read_text())
+        db.kv_set(con, "settings", saved)
+    _merge(raw, saved or {})
     creators = [Creator(**c) for c in raw.pop("creators", [])]
-    return Config(creators=creators, data_dir=data_dir, **raw)
+    cfg = Config(creators=creators, data_dir=data_dir, database=cfg.database, **raw)
+    cfg._con = con
+    return cfg
 
 
 def save_settings(cfg: Config, changes: dict) -> None:
-    """Merge `changes` into settings.json. Sections merge key by key; everything else replaces."""
-    current = json.loads(cfg.settings_path.read_text()) if cfg.settings_path.exists() else {}
-    for key, value in changes.items():
-        if key in SECTIONS:
-            current[key] = {**current.get(key, {}), **value}
-        else:
-            current[key] = value
-    cfg.settings_path.write_text(json.dumps(current, indent=2))
+    """Merge `changes` into the settings saved by the app."""
+    con = cfg.connect()
+    db.kv_set(con, "settings", _merge(db.kv_get(con, "settings", {}), changes))

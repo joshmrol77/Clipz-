@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 
 from . import config, db, pipeline
 from .db import Clip
@@ -119,7 +118,7 @@ def main(argv=None):
     if (args.cmd == "add") and ((args.start is None) != (args.end is None)):
         p.error("--start and --end must be given together")
     cfg = config.load(args.config)
-    con = db.connect(cfg.db_path)
+    con = cfg.connect()
     args.fn(cfg, con, args)
 
 

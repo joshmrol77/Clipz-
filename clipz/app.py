@@ -1,31 +1,41 @@
 """Web app: a few buttons on top of the same pipeline the command line uses.
 
-Two ways to run it. On your own computer (no password): only this machine's browser is let in.
-Hosted on a server so you can use it from a phone: a password is required, because the app
-holds your API keys and can post to your accounts."""
+Three ways to run it:
+- On your own computer (no password): only this machine's browser is let in.
+- Hosted on a server (`clipz app --host 0.0.0.0`): a password is required.
+- On Vercel (see vercel.json and ../app.py): a password is required, and background work runs
+  as short worker requests instead of threads, because a cloud function stops when it replies.
+The app holds your API keys and can post to your accounts, so it never runs open to the internet.
+"""
 from __future__ import annotations
 
+import hashlib
 import hmac
+import os
 import secrets
 import threading
 import time
 import webbrowser
-from datetime import timedelta
-from collections import deque
+import zlib
 from dataclasses import asdict
+from datetime import timedelta
 from pathlib import Path
+from urllib.parse import quote, urlparse
 
-from flask import Flask, abort, jsonify, redirect, request, send_file, session
+import requests
+from flask import Flask, abort, g, jsonify, redirect, request, send_file, session
 from werkzeug.middleware.proxy_fix import ProxyFix
-
 from werkzeug.utils import secure_filename
 
-from . import config, db, pipeline, publish, render
+from . import config, db, download, files, pipeline, publish, render, worker
 from .config import Creator
 from .publish import instagram, tiktok, youtube
 
 SECRET_FIELDS = {"twitch": ["client_secret"], "youtube_upload": ["client_secret"], "tiktok": ["client_secret"]}
 STATIC = Path(__file__).parent / "static"
+CLOUD_BUDGET = 120      # seconds of work per cloud worker run, leaving room under the 300s limit
+WAKE_COOLDOWN = 30      # don't re-wake a stalled worker more often than this
+
 LOGIN_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
 <title>Clipz</title><link rel=manifest href=/static/manifest.webmanifest>
 <link rel=apple-touch-icon href=/static/icon-192.png><meta name=apple-mobile-web-app-capable content=yes><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f1115;color:#e8eaf0;
@@ -36,74 +46,100 @@ border-color:#7c5cff;font-weight:600}p{color:#e5484d;margin:0}</style>
 <input type=password name=password placeholder=Password autofocus required><button>Sign in</button></form>"""
 
 
-def create_app(config_path: str = "config.toml", port: int = 8777, password: str = "") -> Flask:
+
+def create_app(config_path: str = "config.toml", port: int = 8777, password: str = "",
+               cloud: bool | None = None, wake=None) -> Flask:
+    """cloud: run background work as worker requests (Vercel). wake: override how a worker is
+    started (tests)."""
+    cloud = bool(os.environ.get("VERCEL")) if cloud is None else cloud
     app = Flask(__name__, static_folder=None)
-    if password:
-        # Hosted: we sit behind the host's HTTPS proxy, and sign-in is remembered with a cookie.
+    if password or cloud:
+        # Behind the host's HTTPS proxy. The session key is derived from the password so every
+        # cloud instance agrees on it, and changing the password signs everyone out.
         app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-        key_file = config.load(config_path).data_dir / "secret_key"
-        if not key_file.exists():
-            key_file.write_text(secrets.token_hex(32))
-        app.secret_key = key_file.read_text()
+        app.secret_key = hashlib.sha256(b"clipz-session-v1:" + password.encode()).hexdigest()
         app.permanent_session_lifetime = timedelta(days=30)
-        app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
-    log: deque[str] = deque(maxlen=200)
-    busy = threading.Lock()
-    state = {"job": "", "last_auto_run": time.time(), "tiktok_pending": None, "youtube_pending": None}
+        app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",
+                          SESSION_COOKIE_SECURE=cloud)
+    else:
+        app.secret_key = secrets.token_hex(32)  # local: one process, used only for sign-in round trips
+    worker_token = os.environ.get("CRON_SECRET") or hmac.new(
+        (password or app.secret_key).encode(), b"clipz-worker", "sha256").hexdigest()
+    last_auto_run = [time.time()]
 
-    def redirect_uri(platform: str) -> str:
-        """Where a social platform sends the user back to - this app, at whatever address it's reached on."""
-        return f"{request.url_root.rstrip('/')}/oauth/{platform}/callback"
+    def cfg() -> config.Config:
+        """This request's settings and database connection (loaded once per request)."""
+        if "cfg" not in g:
+            g.cfg = config.load(config_path)
+        return g.cfg
 
-    def cfg():
-        return config.load(config_path)
+    @app.teardown_appcontext
+    def close_db(_exc):
+        c = g.pop("cfg", None)
+        if c is not None and c._con is not None:
+            c._con.close()
 
     def say(msg: str) -> None:
-        log.append(f"{time.strftime('%H:%M:%S')}  {msg}")
+        db.log_append(cfg().connect(), msg)
 
-    def start_job(name: str, fn) -> bool:
-        """Run fn(cfg, con) in the background. Only one job at a time."""
-        if not busy.acquire(blocking=False):
-            return False
+    def run_local_worker() -> None:
+        c = config.load(config_path)  # a thread needs its own connection
+        try:
+            worker.run(c, lambda m: db.log_append(c.connect(), m))
+        except Exception as e:
+            db.log_append(c.connect(), f"Background work FAILED: {e}")
+        finally:
+            c.connect().close()
 
-        def work():
-            state["job"] = name
+    def start_worker() -> None:
+        db.kv_set(cfg().connect(), "last_wake", time.time())
+        if wake is not None:
+            wake()
+        elif cloud:
+            # Fire and forget: the new request carries on after we stop waiting for it.
             try:
-                c = cfg()
-                fn(c, db.connect(c.db_path))
-            except Exception as e:
-                say(f"{name} FAILED: {e}")
-            finally:
-                state["job"] = ""
-                busy.release()
+                requests.post(f"{request.url_root.rstrip('/')}/api/worker", timeout=(5, 1.5),
+                              headers={"Authorization": f"Bearer {worker_token}"})
+            except requests.RequestException:
+                pass
+        else:
+            threading.Thread(target=run_local_worker, daemon=True).start()
 
-        threading.Thread(target=work, daemon=True).start()
-        return True
-
-    def find_job(c, con):
-        pipeline.find_and_render(c, con, say)
-        if c.auto_approve:
-            pipeline.publish_approved(c, con, log=say)
-
-    def scheduler():
+    def scheduler() -> None:
+        """Local only: search every N minutes while the app is open."""
         while True:
             time.sleep(20)
             try:
-                minutes = cfg().schedule_minutes
+                c = config.load(config_path)
+                minutes = c.schedule_minutes
+                if minutes > 0 and time.time() - last_auto_run[0] >= minutes * 60:
+                    last_auto_run[0] = time.time()
+                    worker.request_find(c)
+                    threading.Thread(target=run_local_worker, daemon=True).start()
+                c.connect().close()
             except Exception:
                 continue
-            if minutes > 0 and time.time() - state["last_auto_run"] >= minutes * 60:
-                state["last_auto_run"] = time.time()
-                start_job("Finding clips (scheduled)", find_job)
+
+    def worker_authorised() -> bool:
+        return hmac.compare_digest(request.headers.get("Authorization", "").encode(),
+                                   f"Bearer {worker_token}".encode())
 
     @app.before_request
     def guard():
+        if request.endpoint in ("worker_run", "cron"):
+            if not worker_authorised():
+                abort(403)
+            return
+        if request.endpoint == "static_file":
+            return  # the home-screen icon must load before signing in
         if password:
-            if request.endpoint in ("login", "static_file"):
-                return  # the sign-in page and the home-screen icon must load before signing in
+            if request.endpoint == "login":
+                return
             if not session.get("ok"):
                 return (jsonify(error="Signed out - reload the page and sign in again."), 401) \
                     if request.path.startswith("/api/") else redirect("/login")
+        elif cloud:
+            abort(403)  # never run open to the internet
         elif request.host not in (f"127.0.0.1:{port}", f"localhost:{port}"):
             abort(403)  # no password set: only this machine's own browser may talk to the app
         if request.method == "GET":
@@ -139,19 +175,29 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
     def index():
         return send_file(STATIC / "index.html")
 
+    def media_url(clip: db.Clip) -> str:
+        if files.is_url(clip.out_path):
+            return clip.out_path
+        out = Path(clip.out_path)
+        version = int(out.stat().st_mtime) if out.exists() else 0
+        return f"/media/{quote(clip.id, safe='')}?v={version}"
+
     @app.get("/api/state")
     def get_state():
         c = cfg()
-        con = db.connect(c.db_path)
+        con = c.connect()
+        job = worker.busy(c)
+        if not job and worker.pending(c) and time.time() - db.kv_get(con, "last_wake", 0) > WAKE_COOLDOWN:
+            start_worker()  # a hand-off between workers was lost: pick the work back up
+            job = "Starting"
         clips = []
         for clip in db.all_clips(con):
             if clip.status in ("discovered", "downloaded"):
                 continue
-            out = Path(clip.out_path) if clip.out_path else None
             clips.append({**asdict(clip), "posts": db.posts(con, clip.id),
                           "layout": clip.layout or c.render.get("layout", "framed"),
-                          "version": int(out.stat().st_mtime) if out and out.exists() else 0})
-        waiting = len(db.by_status(con, "discovered"))
+                          "media_url": media_url(clip) if clip.out_path else "",
+                          "version": zlib.crc32(media_url(clip).encode()) if clip.out_path else 0})
         settings = {k: getattr(c, k) for k in config.SCALARS}
         settings["keywords"] = c.keywords
         settings["hashtags"] = c.render.get("hashtags", [])
@@ -162,11 +208,12 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
                 values[secret + "_set"] = bool(values.pop(secret, ""))
             settings[section] = values
         return jsonify(
-            creators=[asdict(x) for x in c.creators], clips=clips, waiting=waiting,
+            creators=[asdict(x) for x in c.creators], clips=clips,
+            waiting=len(db.by_status(con, "discovered")),
             settings=settings, accounts={n: m.connected(c) for n, m in publish.PLATFORMS.items()},
             layouts=render.LAYOUTS, backgrounds=pipeline.backgrounds(c),
             tiktok_redirect=redirect_uri("tiktok"), youtube_redirect=redirect_uri("youtube"),
-            hosted=bool(password), job=state["job"], log=list(log)[-60:],
+            hosted=bool(password), cloud=cloud, job=job, log=db.log_tail(con),
         )
 
     @app.post("/api/creators")
@@ -221,23 +268,30 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
 
     @app.post("/api/run")
     def run():
-        return jsonify(started=start_job("Finding clips", find_job))
+        worker.request_find(cfg())
+        start_worker()
+        return jsonify(started=True)
 
     @app.post("/api/publish")
     def post_all():
-        return jsonify(started=start_job("Posting", lambda c, con: pipeline.publish_approved(c, con, log=say)))
+        worker.request_publish(cfg())
+        start_worker()
+        return jsonify(started=True)
 
     @app.post("/api/retry")
     def retry():
-        return jsonify(started=start_job(
-            "Retrying", lambda c, con: pipeline.process(c, con, db.by_status(con, "failed"), say)))
+        con = cfg().connect()
+        for clip in db.by_status(con, "failed"):
+            db.update(con, clip.id, status="queued")
+        start_worker()
+        return jsonify(started=True)
 
     @app.post("/api/clips/<path:clip_id>/layout")
     def set_layout(clip_id):
         """Change a clip's layout / gameplay video / headline and re-edit it."""
         body = request.get_json()
         c = cfg()
-        con = db.connect(c.db_path)
+        con = c.connect()
         clip = db.get(con, clip_id)
         if not clip:
             abort(404)
@@ -247,17 +301,15 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         if layout not in render.LAYOUTS:
             return jsonify(error="unknown layout"), 400
         if layout == "split":
-            if not pipeline.backgrounds(c):
+            available = pipeline.backgrounds(c)
+            if not available:
                 return jsonify(error="Add a gameplay video first - the split layout needs one."), 400
-            if background and background not in pipeline.backgrounds(c):
+            if background and background not in available:
                 return jsonify(error="That gameplay video no longer exists."), 400
         title = (body.get("title") or clip.title).strip()
-
-        def job(c, con):
-            db.update(con, clip_id, layout=layout, background=background, title=title)
-            pipeline.process(c, con, [db.get(con, clip_id)], say)
-
-        return jsonify(started=start_job("Re-editing clip", job))
+        db.update(con, clip_id, layout=layout, background=background, title=title, status="queued")
+        start_worker()
+        return jsonify(started=True)
 
     @app.post("/api/backgrounds")
     def upload_background():
@@ -265,9 +317,29 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         name = secure_filename(f.filename) if f and f.filename else ""
         if not name or Path(name).suffix.lower() not in render.BACKGROUND_TYPES:
             return jsonify(error="Choose a video file (" + ", ".join(render.BACKGROUND_TYPES) + ")."), 400
-        folder = cfg().data_dir / "backgrounds"
+        c = cfg()
+        folder = c.data_dir / "backgrounds"
         folder.mkdir(parents=True, exist_ok=True)
         f.save(folder / name)
+        files.add_background(c, folder / name, name)
+        say(f"Added gameplay video {name}")
+        return jsonify(ok=True, name=name)
+
+    @app.post("/api/backgrounds/link")
+    def background_from_link():
+        """Gameplay video from a link - the way to add one from a phone, since cloud functions
+        can't accept large uploads."""
+        url = (request.get_json().get("url") or "").strip()
+        if urlparse(url).scheme not in ("http", "https"):
+            return jsonify(error="Paste a full link starting with https://"), 400
+        c = cfg()
+        name = secure_filename(Path(urlparse(url).path).stem)[:40] or "gameplay"
+        name = f"{name}-{secrets.token_hex(2)}.mp4"
+        try:
+            path = download.fetch_video(url, c.data_dir / "backgrounds", name)
+        except Exception as e:
+            return jsonify(error=f"Couldn't get a video from that link: {str(e)[:200]}"), 400
+        files.add_background(c, path, name)
         say(f"Added gameplay video {name}")
         return jsonify(ok=True, name=name)
 
@@ -276,7 +348,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         moves = {"approve": (("rendered", "rejected"), "approved"), "reject": (("rendered", "approved"), "rejected")}
         if action not in moves:
             abort(404)
-        con = db.connect(cfg().db_path)
+        con = cfg().connect()
         clip = db.get(con, clip_id)
         if not clip:
             abort(404)
@@ -288,56 +360,56 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
 
     @app.get("/media/<path:clip_id>")
     def media(clip_id):
-        clip = db.get(db.connect(cfg().db_path), clip_id)
-        if not clip or not clip.out_path or not Path(clip.out_path).exists():
+        clip = db.get(cfg().connect(), clip_id)
+        if not clip or not clip.out_path:
+            abort(404)
+        if files.is_url(clip.out_path):
+            return redirect(clip.out_path)
+        if not Path(clip.out_path).exists():
             abort(404)
         return send_file(Path(clip.out_path).resolve(), mimetype="video/mp4", conditional=True)
 
-    @app.get("/connect/youtube")
-    def connect_youtube():
+    def redirect_uri(platform: str) -> str:
+        """Where a social platform sends the user back to - this app, at whatever address it's reached on."""
+        return f"{request.url_root.rstrip('/')}/oauth/{platform}/callback"
+
+    def begin_oauth(platform: str, module):
         try:
-            url, st, verifier = youtube.authorize_url(cfg(), redirect_uri("youtube"))
+            url, st, verifier = module.authorize_url(cfg(), redirect_uri(platform))
         except RuntimeError as e:
             say(str(e))
             return redirect("/#accounts")
-        state["youtube_pending"] = (st, verifier)
+        session[f"oauth_{platform}"] = [st, verifier]  # signed cookie: works across cloud instances
         return redirect(url)
+
+    def finish_oauth(platform: str, module, label: str):
+        pending = session.pop(f"oauth_{platform}", None)
+        if not pending or request.args.get("state") != pending[0] or "code" not in request.args:
+            reason = request.args.get("error_description") or request.args.get("error") or "unexpected response"
+            say(f"{label} connect failed: {reason}")
+        else:
+            try:
+                module.finish_connect(cfg(), request.args["code"], pending[1], redirect_uri(platform))
+                say(f"{label} connected.")
+            except Exception as e:
+                say(f"{label} connect failed: {e}")
+        return redirect("/#accounts")
+
+    @app.get("/connect/youtube")
+    def connect_youtube():
+        return begin_oauth("youtube", youtube)
 
     @app.get("/oauth/youtube/callback")
     def youtube_callback():
-        pending, state["youtube_pending"] = state["youtube_pending"], None
-        if not pending or request.args.get("state") != pending[0] or "code" not in request.args:
-            say(f"YouTube connect failed: {request.args.get('error', 'unexpected response')}")
-        else:
-            try:
-                youtube.finish_connect(cfg(), request.args["code"], pending[1], redirect_uri("youtube"))
-                say("YouTube connected.")
-            except Exception as e:
-                say(f"YouTube connect failed: {e}")
-        return redirect("/#accounts")
+        return finish_oauth("youtube", youtube, "YouTube")
 
     @app.get("/connect/tiktok")
     def connect_tiktok():
-        try:
-            url, st, verifier = tiktok.authorize_url(cfg(), redirect_uri("tiktok"))
-        except RuntimeError as e:
-            say(str(e))
-            return redirect("/#accounts")
-        state["tiktok_pending"] = (st, verifier)
-        return redirect(url)
+        return begin_oauth("tiktok", tiktok)
 
     @app.get("/oauth/tiktok/callback")
     def tiktok_callback():
-        pending, state["tiktok_pending"] = state["tiktok_pending"], None
-        if not pending or request.args.get("state") != pending[0] or "code" not in request.args:
-            say(f"TikTok connect failed: {request.args.get('error_description', 'unexpected response')}")
-        else:
-            try:
-                tiktok.finish_connect(cfg(), request.args["code"], pending[1], redirect_uri("tiktok"))
-                say("TikTok connected.")
-            except Exception as e:
-                say(str(e))
-        return redirect("/#accounts")
+        return finish_oauth("tiktok", tiktok, "TikTok")
 
     @app.post("/api/connect/instagram")
     def connect_instagram():
@@ -355,9 +427,58 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         publish.PLATFORMS[name].disconnect(cfg())
         return jsonify(ok=True)
 
+    def run_worker_here():
+        result = worker.run(cfg(), say, budget=CLOUD_BUDGET if cloud else None)
+        if result == "more":
+            start_worker()
+        return jsonify(result=result)
+
+    @app.post("/api/worker")
+    def worker_run():
+        return run_worker_here()
+
+    @app.get("/api/cron")
+    def cron():
+        """Vercel calls this on the schedule in vercel.json."""
+        c = cfg()
+        say("Scheduled search starting.")
+        worker.request_find(c)
+        if c.auto_approve:
+            worker.request_publish(c)
+        return run_worker_here()
+
     app.start_scheduler = lambda: threading.Thread(target=scheduler, daemon=True).start()
     return app
 
+
+SETUP_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
+<title>Clipz setup</title><style>body{margin:0;background:#0f1115;color:#e8eaf0;font:16px/1.5 system-ui,sans-serif}
+main{max-width:560px;margin:0 auto;padding:24px 16px}li{margin:10px 0}code{background:#181b22;padding:1px 6px;
+border-radius:6px}</style><main><h1>Clipz needs a few things</h1>
+<p>In your Vercel project, add the items below, then redeploy (Deployments tab, the latest one, Redeploy).</p>
+<ol>__ITEMS__</ol></main>"""
+
+
+def create_vercel_app() -> Flask:
+    """The app Vercel runs. Shows a setup checklist instead of the app until everything it
+    needs is in place, so it never runs without a password or anywhere to keep its data."""
+    missing = []
+    if not os.environ.get("CLIPZ_PASSWORD"):
+        missing.append("<b>Password</b>: Settings, Environment Variables, add <code>CLIPZ_PASSWORD</code> "
+                       "with a long password of your choice.")
+    if not config.database_url():
+        missing.append("<b>Database</b>: Storage tab, Create Database, choose <b>Neon</b> (free), "
+                       "and connect it to this project.")
+    if not files.cloud():
+        missing.append("<b>Video storage</b>: Storage tab, Create, choose <b>Blob</b> with <b>public</b> "
+                       "access, and connect it to this project.")
+    if missing:
+        setup = Flask(__name__)
+        page = SETUP_PAGE.replace("__ITEMS__", "".join(f"<li>{m}</li>" for m in missing))
+        setup.add_url_rule("/", "setup", lambda: page)
+        setup.add_url_rule("/<path:_any>", "setup_any", lambda _any: page)
+        return setup
+    return create_app(password=os.environ["CLIPZ_PASSWORD"], cloud=True)
 
 def serve(config_path: str = "config.toml", port: int = 8777, open_browser: bool = True,
           host: str = "127.0.0.1", password: str = "") -> None:

@@ -81,6 +81,6 @@ def test_old_database_gains_new_columns(tmp_path):
     old = sqlite3.connect(tmp_path / "old.sqlite")
     cols = [c for c in db.COLUMNS if c not in ("layout", "background")]
     old.execute(f"CREATE TABLE clips ({', '.join(cols)})")
-    old.execute(f"INSERT INTO clips (id, title, status) VALUES ('a', 't', 'rendered')")
+    old.execute("INSERT INTO clips (id, title, status) VALUES ('a', 't', 'rendered')")
     old.commit(); old.close()
     assert db.get(db.connect(tmp_path / "old.sqlite"), "a").layout == ""

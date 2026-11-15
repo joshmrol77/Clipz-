@@ -74,6 +74,7 @@
   .editor { display: flex; gap: 20px; flex-wrap: wrap; }
   .editor video { width: 250px; aspect-ratio: 9/16; background: #000; border-radius: 10px; flex: 0 0 auto; margin: 0 auto; align-self: flex-start; }
   .editor .side { flex: 1 1 300px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .editor .side label.field { flex: none; }
   .layouts { display: flex; gap: 10px; flex-wrap: wrap; }
   .layout { flex: 1 1 110px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px;
             font-size: 12px; color: var(--muted); text-align: center; }
@@ -106,7 +107,7 @@
 </main>
 <script>
 const TABS = { clips: "Clips", streamers: "Streamers", accounts: "Accounts", settings: "Settings" };
-const FILTERS = { rendered: "To review", approved: "Approved", published: "Posted", rejected: "Rejected", failed: "Failed" };
+const FILTERS = { queued: "Being edited", rendered: "To review", approved: "Approved", published: "Posted", rejected: "Rejected", failed: "Failed" };
 let S = null, tab = (location.hash.slice(1) in TABS) ? location.hash.slice(1) : "clips", filter = "rendered";
 let editing = null, pick = null;  // clip id open in the editor, and the choices made there so far
 let dirty = false;  // true while the user is typing in a form, so refreshes don't wipe their input
@@ -141,7 +142,7 @@ async function refresh() {
   $("job").textContent = S.job ? S.job + "…" : "";
   $("run").disabled = $("post").disabled = !!S.job;
   const log = $("log"), atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
-  log.textContent = S.log.length ? S.log.join("\n") : "Nothing yet.";
+  log.textContent = S.log.length ? S.log.map(([t, m]) => new Date(t * 1000).toLocaleTimeString() + "  " + m).join("\n") : "Nothing yet.";
   if (atBottom) log.scrollTop = log.scrollHeight;
   renderTabs();
   if (editing) renderEditor();
@@ -184,7 +185,7 @@ const MINI = {
   split: () => [h("i", { className: "clipbox", style: "top:0;height:40px" }), h("i", { className: "game", style: "top:40px;height:40px" }), h("i", { className: "txt", style: "top:38px" })],
 };
 const NAMES = { framed: "Framed", full: "Just the clip", split: "Clip + gameplay" };
-const mediaUrl = c => `/media/${encodeURIComponent(c.id)}?v=${c.version}#t=0.1`;
+const mediaUrl = c => c.media_url + "#t=0.1";
 
 function openEditor(c) {
   editing = c.id;
@@ -202,7 +203,7 @@ function renderEditor() {
   const root = $("editor");
   if (root.dataset.key === key) return;  // nothing changed: don't restart the video or lose typing
   root.dataset.key = key;
-  const id = encodeURIComponent(c.id), busy = !!S.job, editable = c.status !== "published";
+  const id = encodeURIComponent(c.id), beingEdited = c.status === "queued", editable = !["published", "queued"].includes(c.status);
   const title = h("input", { type: "text", value: pick.title, disabled: !editable, on: { input: e => pick.title = e.target.value } });
   const tiles = Object.keys(S.layouts).map(name =>
     h("button", { className: "layout" + (name === pick.layout ? " on" : ""), title: S.layouts[name], disabled: !editable,
@@ -216,7 +217,8 @@ function renderEditor() {
         ? h("select", { style: "flex:1", on: { change: e => { pick.background = e.target.value; } } },
             S.backgrounds.map(b => h("option", { value: b, selected: b === pick.background }, b)))
         : h("span", { className: "err", style: "flex:1" }, "None added yet."),
-      upload, h("button", { on: { click: () => upload.click() } }, "Add video…")));
+      S.cloud ? null : upload, S.cloud ? null : h("button", { on: { click: () => upload.click() } }, "Upload…"),
+      h("button", { on: { click: backgroundFromLink } }, "Add from link…")));
   const changed = pick.layout !== c.layout || pick.title !== c.title || (pick.layout === "split" && (pick.background || S.backgrounds[0] || "") !== (c.background || ""));
   const apply = () => api("POST", `/api/clips/${id}/layout`, { layout: pick.layout, title: pick.title,
     background: pick.layout === "split" ? (pick.background || S.backgrounds[0] || "") : "" });
@@ -229,12 +231,24 @@ function renderEditor() {
       h("div", {}, h("div", { className: "muted", style: "margin-bottom:6px" }, "Layout"), h("div", { className: "layouts" }, tiles)),
       gameplay,
       c.status === "failed" ? h("div", { className: "err" }, c.error) : null,
-      editable ? h("button", { className: "primary", disabled: busy, on: { click: apply } },
-        busy ? S.job + "…" : changed ? "Apply and re-edit" : "Re-edit clip") : h("div", { className: "muted" }, "Already posted - can't be changed."),
+      editable ? h("button", { className: "primary", on: { click: apply } }, changed ? "Apply and re-edit" : "Re-edit clip")
+        : h("div", { className: "muted" }, beingEdited ? "Being edited - the new version appears here when it's ready." : "Already posted - can't be changed."),
       h("div", { className: "row" },
         ["rendered", "rejected"].includes(c.status) ? h("button", { className: "good", on: { click: async () => { await api("POST", `/api/clips/${id}/approve`); closeEditor(); } } }, "Approve") : null,
         ["rendered", "approved"].includes(c.status) ? h("button", { className: "ghost-bad", on: { click: async () => { await api("POST", `/api/clips/${id}/reject`); closeEditor(); } } }, "Reject") : null,
         h("button", { style: "margin-left:auto", on: { click: closeEditor } }, "Close")))));
+}
+
+async function backgroundFromLink() {
+  const url = prompt("Paste a link to a gameplay video (YouTube, Streamable, a direct .mp4 link…). The first 3 minutes are used.");
+  if (!url) return;
+  $("job").textContent = "Downloading gameplay video…";
+  const r = await fetch("/api/backgrounds/link", { method: "POST", headers: { "Content-Type": "application/json", "X-Clipz": "1" }, body: JSON.stringify({ url }) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) return alert(data.error || "Couldn't add that video (" + r.status + ")");
+  pick.background = data.name;
+  $("editor").dataset.key = "";
+  await refresh();
 }
 
 async function uploadBackground(file) {
@@ -366,8 +380,10 @@ function renderSettings() {
       h("div", { className: "row", style: "margin-top:10px" }, field("Layout for new clips (change any clip later by clicking it)", f.layout))),
     h("div", { className: "panel" },
       h("h2", {}, "Autopilot"),
-      h("p", { className: "muted" }, "Works while this app is open on your computer."),
-      h("div", { className: "row" }, field("Search automatically every (minutes, 0 = off)", f.schedule_minutes)),
+      h("p", { className: "muted" }, S.cloud
+        ? "Clipz searches automatically once a day (the most Vercel's free plan allows). Press \"Find new clips\" any time for more."
+        : "Works while this app is open on your computer."),
+      S.cloud ? null : h("div", { className: "row" }, field("Search automatically every (minutes, 0 = off)", f.schedule_minutes)),
       h("label", { className: "check", style: "margin-top:12px" }, f.auto_approve, "Skip review: approve and post every clip automatically")),
     h("div", { className: "panel" },
       h("h2", {}, "Twitch access"),

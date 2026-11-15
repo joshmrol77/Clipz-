@@ -10,7 +10,7 @@ find (Twitch / Kick / YouTube)  ->  download  ->  edit to 9:16  ->  review  ->  
 
 ## Start the app
 
-Needs Python 3.11+ and ffmpeg 6.1+ on your computer.
+Needs Python 3.11+ on your computer (ffmpeg comes bundled).
 
 ```sh
 pip install -e .
@@ -44,20 +44,39 @@ layout used for new clips is chosen in Settings.
 Autopilot (Settings) repeats the search every N minutes and can skip review entirely. It
 runs only while the app is open.
 
-## Use it from a phone (host it on a server)
+## Use it from your phone (Vercel)
 
-A phone can't run Clipz itself (it needs Python and ffmpeg), but it can use Clipz in its
-browser if the app runs on a server. The included `Dockerfile` is for that:
+Clipz runs on Vercel's free plan, so it's always on and opens on your phone like an app.
 
-1. On a hosting service that builds a GitHub repository's Dockerfile and offers a persistent
-   disk, create a service from this repository.
-2. Set the environment variable `CLIPZ_PASSWORD` to a long password. Clipz refuses to start
-   on a server without one, because the app holds your keys and can post to your accounts.
-3. Attach a persistent disk at `/srv/data` so settings, sign-ins and videos survive restarts.
-4. Open the service's `https://` address on your phone and sign in with the password.
+1. **Project**: import this GitHub repository in Vercel (Add New, Project). No build
+   settings are needed: Vercel finds `app.py` and `vercel.json`.
+2. **Database**: in the project's Storage tab, create a **Neon** Postgres database (free) and
+   connect it to the project. This keeps your settings, sign-ins and clip queue.
+3. **Video storage**: in the Storage tab, create a **Blob** store with **public** access and
+   connect it. Finished videos live here (under long random addresses nobody can guess).
+4. **Password**: Settings, Environment Variables: add `CLIPZ_PASSWORD` (a long password of your
+   choice) and `CRON_SECRET` (any long random text; Vercel uses it to start the daily search).
+5. Redeploy, then open `https://<your-project>.vercel.app` on your phone, sign in, and use
+   your browser's **Add to Home Screen** to get the Clipz icon.
 
-Hosted this way it also runs around the clock, so autopilot keeps working with no computer on.
-The Dockerfile has not been built yet - treat the first deploy as a test.
+Until steps 2-4 are done the site shows a checklist instead of the app, so it never runs
+without a password.
+
+How it differs from running on a computer:
+
+- **Daily autopilot**: the free plan allows one scheduled run a day (15:17 UTC; change it in
+  `vercel.json`). Press **Find new clips** any time for more.
+- **Background work runs in short shifts**: each shift does a few minutes of finding, editing
+  or posting, then starts the next. If a hand-off is ever lost, opening the app picks the work
+  back up.
+- **Gameplay videos are added from a link** (Add from link...), because cloud functions can't
+  take large uploads from a phone.
+- **Some sites may block cloud servers**: Twitch works through its official API, but YouTube
+  and Kick sometimes refuse downloads from data-centre addresses. If that happens, those clips
+  fail with an error in the Activity box.
+
+Running it on a computer still works exactly as before (`clipz app`), and the `Dockerfile` is
+still there for other hosts.
 
 ## One-time account setup
 
@@ -89,7 +108,8 @@ Each platform makes you register a free developer app before software may act fo
 
 ## What has and hasn't been tested
 
-Tested: the editing, the queue, and the app's screens and buttons. **Not yet run against the
+Tested: the editing, the queue, the app's screens and buttons, and the cloud version against a
+real Postgres database with its background shifts running over real web requests. **Not yet run against the
 real services**: Twitch/Kick/YouTube search and download, YouTube upload, and the TikTok
 and Instagram connections and uploads (written from their specs). Expect to fix small things on first
 real use.
