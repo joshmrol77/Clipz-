@@ -30,10 +30,14 @@ class Creator:
     credit: str = ""
     all_content: bool = False     # True = clip everything they stream, not just the configured game
     hashtags: list[str] = field(default_factory=list)   # empty = use the global hashtags
+    category: str = ""            # your own grouping, e.g. "GTA 6" or "IRL"
+    name: str = ""                # display name; also what Clipz searches YouTube for
 
     def __post_init__(self):
         self.channel = self.channel.strip()
         self.hashtags = [h.strip().lstrip("#") for h in self.hashtags if h.strip()]
+        self.category = self.category.strip() or "General"
+        self.name = self.name.strip()
         if self.platform not in PLATFORMS:
             raise ValueError(f"platform must be one of {PLATFORMS}, got {self.platform!r}")
         if not self.channel:
@@ -41,7 +45,9 @@ class Creator:
         if not self.credit:
             handle = self.channel.rstrip("/").rsplit("/", 1)[-1]
             site = {"twitch": "twitch.tv/", "kick": "kick.com/", "youtube": "youtube.com/"}[self.platform]
-            if self.platform == "youtube" and not handle.startswith("@"):
+            if self.platform == "youtube" and handle.startswith("UC") and len(handle) == 24:
+                handle = "channel/" + handle          # a channel ID rather than an @handle
+            elif self.platform == "youtube" and not handle.startswith("@"):
                 handle = "@" + handle
             self.credit = site + handle
 
@@ -52,7 +58,7 @@ class Config:
     keywords: list[str] = field(default_factory=lambda: ["gta"])
     lookback_hours: int = 24
     min_views: int = 50
-    max_clips_per_run: int = 10
+    max_clips_per_run: int = 0        # auto-edit this many of the best finds per search; 0 = pick in Browse
     max_duration: int = 60
     auto_approve: bool = False
     schedule_minutes: int = 0          # app only: 0 = never run automatically

@@ -5,7 +5,7 @@ game = "Grand Theft Auto VI"      # Twitch category name; also used as a Kick ca
 keywords = ["gta"]                # YouTube videos must contain one of these in the title
 lookback_hours = 24               # only consider clips newer than this
 min_views = 50                    # ignore clips below this view count
-max_clips_per_run = 10            # how many of the top-ranked clips to download + render per run
+max_clips_per_run = 0             # auto-edit this many of the best finds per search (0 = pick them in Browse)
 max_duration = 60                 # seconds; longer clips are trimmed
 auto_approve = false              # true = rendered clips skip the review step and are publishable immediately
 schedule_minutes = 0              # app only: search automatically every N minutes (0 = off)

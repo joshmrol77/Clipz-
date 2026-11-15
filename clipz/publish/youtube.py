@@ -17,7 +17,7 @@ import requests
 
 from . import tokens
 from ..config import Config
-from ..db import Clip
+from ..db import Clip, credit_line
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 NAME = "youtube"
@@ -34,7 +34,7 @@ def metadata(clip: Clip, hashtags: list[str], gaming: bool = True) -> dict:
         title = title[: room - 1].rstrip() + "…"
     return {
         "title": f"{title} #Shorts",
-        "description": f"Clip credit: {clip.credit}\nOriginal: {clip.url}\n\n{tags}",
+        "description": f"Clip credit: {credit_line(clip)}\nOriginal: {clip.url}\n\n{tags}",
         "tags": [t.lstrip("#") for t in hashtags],
         "categoryId": "20" if gaming else "24",  # Gaming / Entertainment
     }

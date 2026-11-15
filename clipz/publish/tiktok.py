@@ -16,7 +16,7 @@ import requests
 
 from . import tokens
 from ..config import Config
-from ..db import Clip
+from ..db import Clip, credit_line
 
 NAME = "tiktok"
 AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
@@ -90,7 +90,7 @@ def chunk_plan(size: int) -> tuple[int, int]:
 
 def caption(clip: Clip, hashtags: list[str]) -> str:
     tags = " ".join(f"#{t.lstrip('#')}" for t in hashtags)
-    return f"{clip.title.strip()} | clip: {clip.credit} {tags}".strip()[:2200]
+    return f"{clip.title.strip()} | clip: {credit_line(clip)} {tags}".strip()[:2200]
 
 
 def upload(cfg: Config, clip: Clip) -> str:

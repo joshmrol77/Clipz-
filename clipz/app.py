@@ -30,7 +30,7 @@ from werkzeug.utils import secure_filename
 from . import config, db, download, files, pipeline, publish, render, worker
 from .config import Creator
 from .publish import instagram, tiktok, youtube
-from .sources import twitch as twitch_source
+from .sources import kick as kick_source, twitch as twitch_source, youtube as youtube_source
 
 SECRET_FIELDS = {"twitch": ["client_secret"], "youtube_upload": ["client_secret"], "tiktok": ["client_secret"]}
 STATIC = Path(__file__).parent / "static"
@@ -210,6 +210,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             settings[section] = values
         return jsonify(
             creators=[asdict(x) for x in c.creators], clips=clips,
+            categories=sorted({x.category for x in c.creators}),
             waiting=len(db.by_status(con, "discovered")),
             settings=settings,
             accounts={**{n: m.connected(c) for n, m in publish.PLATFORMS.items()},
@@ -224,7 +225,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         body = request.get_json()
         try:
             new = Creator(body.get("platform", ""), body.get("channel", ""), body.get("credit", ""),
-                          bool(body.get("all_content")), list(body.get("hashtags") or []))
+                          bool(body.get("all_content")), list(body.get("hashtags") or []),
+                          body.get("category", ""), body.get("name", ""))
         except ValueError as e:
             return jsonify(error=str(e)), 400
         c = cfg()
@@ -235,14 +237,37 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
 
     @app.get("/api/search/streamers")
     def search_streamers():
-        """Suggestions while typing a channel name. Only Twitch has a search Clipz can use."""
-        c = cfg()
-        if request.args.get("platform") != "twitch" or not (c.twitch.get("client_id") and c.twitch.get("client_secret")):
+        """Suggestions while typing a channel name."""
+        c, platform = cfg(), request.args.get("platform")
+        searchers = {"twitch": twitch_source, "kick": kick_source, "youtube": youtube_source}
+        if platform not in searchers:
             return jsonify(results=[])
+        if platform == "twitch" and not (c.twitch.get("client_id") and c.twitch.get("client_secret")):
+            return jsonify(results=[], error="Connect Twitch in Settings to get suggestions.")
         try:
-            return jsonify(results=twitch_source.search_channels(c, request.args.get("q", "")))
+            return jsonify(results=searchers[platform].search_channels(c, request.args.get("q", "")))
         except Exception as e:
-            return jsonify(results=[], error=str(e)[:200])
+            return jsonify(results=[], error=f"Couldn't search {platform.title()} right now - type the exact channel name. ({str(e)[:120]})")
+
+    @app.get("/api/browse")
+    def browse():
+        """Everything found, best first, for the Browse screen. ?category= narrows it down."""
+        c = cfg()
+        con = c.connect()
+        want = request.args.get("category", "")
+        offset, limit = int(request.args.get("offset", 0)), min(int(request.args.get("limit", 20)), 50)
+        show = ("discovered", "queued", "rendered", "approved", "published", "failed")
+        items = []
+        for clip in db.all_clips(con):
+            if clip.status not in show:
+                continue
+            creator = c.creator_for(clip)
+            category = creator.category if creator else "General"
+            if want and category != want:
+                continue
+            items.append({**asdict(clip), "category": category,
+                          "streamer": (creator.name or creator.channel) if creator else clip.creator})
+        return jsonify(clips=items[offset:offset + limit], total=len(items))
 
     @app.delete("/api/creators")
     def remove_creator():
@@ -357,7 +382,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
 
     @app.post("/api/clips/<path:clip_id>/<action>")
     def set_status(clip_id, action):
-        moves = {"approve": (("rendered", "rejected"), "approved"), "reject": (("rendered", "approved"), "rejected")}
+        moves = {"approve": (("rendered", "rejected"), "approved"), "reject": (("rendered", "approved"), "rejected"),
+                 "edit": (("discovered", "skipped", "failed"), "queued"), "skip": (("discovered",), "skipped")}
         if action not in moves:
             abort(404)
         con = cfg().connect()
@@ -368,6 +394,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         if clip.status not in allowed:
             return jsonify(error=f"clip is already {clip.status}"), 400
         db.update(con, clip_id, status=to)
+        if to == "queued":
+            start_worker()
         return jsonify(ok=True)
 
     @app.get("/media/<path:clip_id>")

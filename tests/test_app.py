@@ -39,7 +39,7 @@ def test_add_and_remove_streamer(env):
     assert post(client, "/api/creators", {"platform": "twitch", "channel": "ABC"}).status_code == 400   # duplicate
     creators = client.get("/api/state").get_json()["creators"]
     assert creators == [{"platform": "twitch", "channel": "abc", "credit": "twitch.tv/abc",
-                         "all_content": False, "hashtags": []}]
+                         "all_content": False, "hashtags": [], "category": "General", "name": ""}]
     post(client, "/api/creators", creators[0], method="delete")
     assert client.get("/api/state").get_json()["creators"] == []
 

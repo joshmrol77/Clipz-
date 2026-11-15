@@ -4,9 +4,11 @@ runs in the cloud (set DATABASE_URL). SQL is written once, SQLite-style, and tra
 Clip status flow:
 
 discovered -> queued -> rendered -> approved -> published
-                             \\-> rejected          (any step can also -> failed)
+     \\-> skipped             \\-> rejected          (any step can also -> failed)
 
-`queued` means "download/edit this clip next" - set for the top new finds, re-edits and retries.
+`discovered` clips are what the Browse screen shows. `queued` means "download/edit this clip
+next" - set when you pick one in Browse, for the top new finds (if auto-edit is on), re-edits
+and retries. `skipped` is a find you passed on in Browse.
 `posts` records each (clip, social platform) upload so a clip is never posted twice to the
 same place and a failure on one platform can be retried without re-posting to the others.
 `kv` holds settings, account sign-ins and work requests; `locks` makes sure only one worker
@@ -43,6 +45,9 @@ class Clip:
     error: str = ""
     layout: str = ""        # "" = use the default layout from settings
     background: str = ""    # gameplay video name, for the split layout
+    thumbnail: str = ""     # picture shown in Browse
+    preview: str = ""       # what Browse plays: an embeddable page, or a video file URL
+    uploader: str = ""      # who posted it, when that isn't the streamer (another clipper)
 
 
 COLUMNS = list(Clip.__dataclass_fields__)
@@ -107,9 +112,15 @@ def connect(target: str | Path):
     return con
 
 
+def credit_line(clip: Clip) -> str:
+    """Who to credit in a post: the streamer, plus whoever posted the clip if that was someone else."""
+    return f"{clip.credit} (clip via {clip.uploader})" if clip.uploader else clip.credit
+
+
 def _clip(row) -> Clip:
     data = dict(row)
-    for c in ("src_path", "out_path", "published_url", "error", "layout", "background"):
+    for c in ("src_path", "out_path", "published_url", "error", "layout", "background",
+              "thumbnail", "preview", "uploader"):
         data[c] = data.get(c) or ""
     return Clip(**{c: data[c] for c in COLUMNS})
 
@@ -153,6 +164,14 @@ def by_status(con, status: str, limit: int | None = None) -> list[Clip]:
 
 def all_clips(con) -> list[Clip]:
     return [_clip(r) for r in con.execute("SELECT * FROM clips ORDER BY score DESC, id")]
+
+
+def prune(con, before_iso: str) -> int:
+    """Forget finds you never picked that are older than `before_iso` (keeps Browse fresh)."""
+    cur = con.execute("DELETE FROM clips WHERE status IN ('discovered', 'skipped') AND created_at < ?",
+                      (before_iso,))
+    con.commit()
+    return cur.rowcount
 
 
 def record_post(con, clip_id: str, platform: str, ref: str = "", error: str = "") -> None:

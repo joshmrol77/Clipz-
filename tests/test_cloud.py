@@ -308,3 +308,83 @@ def test_blob_store_id_connection_counts_as_connected(monkeypatch):
     assert not files.cloud()
     monkeypatch.setenv("CLIPZ_VIDEOS_STORE_ID", "store_AbC123")
     assert files.cloud() and os.environ["BLOB_STORE_ID"] == "store_AbC123"
+
+
+# ---- Browse, categories and searching every platform -------------------------------------------
+
+def test_browse_lists_finds_by_category_and_edit_skip_work(cloud_app):
+    client, woke, base = cloud_app
+    c = config.load("config.toml")
+    config.save_settings(c, {"creators": [
+        {"platform": "twitch", "channel": "togi", "category": "IRL"},
+        {"platform": "twitch", "channel": "gtaguy", "category": "GTA 6"}]})
+    con = c.connect()
+    db.add(con, Clip(id="twitch:1", platform="twitch", creator="togi", credit="x", title="a", url="u", score=2))
+    db.add(con, Clip(id="twitch:2", platform="twitch", creator="gtaguy", credit="x", title="b", url="u", score=1))
+    db.add(con, Clip(id="twitch:3", platform="twitch", creator="gtaguy", credit="x", title="c", url="u", status="skipped"))
+    get = lambda q="": client.get("/api/browse" + q, **base).get_json()
+    assert [x["id"] for x in get()["clips"]] == ["twitch:1", "twitch:2"]          # skipped ones hidden
+    assert [x["id"] for x in get("?category=IRL")["clips"]] == ["twitch:1"]
+    assert client.get("/api/state", **base).get_json()["categories"] == ["GTA 6", "IRL"]
+    act = lambda cid, a: client.post(f"/api/clips/{cid}/{a}", data="{}", content_type="application/json",
+                                     headers={"X-Clipz": "1"}, **base)
+    assert act("twitch:1", "edit").status_code == 200 and woke                       # starts editing
+    assert db.get(con, "twitch:1").status == "queued"
+    assert act("twitch:2", "skip").status_code == 200
+    assert get()["total"] == 1
+
+
+def test_youtube_channel_search_and_clips_from_other_uploaders(cfg, monkeypatch):
+    from clipz.config import Creator
+    from clipz.sources import youtube
+    calls = []
+
+    def fake_search(query, sp, limit):
+        calls.append((query, sp))
+        if sp == youtube.CHANNELS:
+            return [{"uploader_id": "@TOGI", "channel": "TOGI", "channel_follower_count": 1200000,
+                     "thumbnails": [{"url": "//img/1.jpg"}]},
+                    {"uploader_id": None, "channel_url": "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv", "channel": "Togi Clips"}]
+        now = time.time()
+        return [
+            {"id": "v1", "title": "TOGI loses it", "duration": 40, "view_count": 900, "timestamp": now - 3600, "channel": "ClipKing", "uploader_id": "@clipking"},
+            {"id": "v2", "title": "TOGI full stream", "duration": 7200, "view_count": 9000, "timestamp": now - 3600, "channel": "TOGI"},
+            {"id": "v3", "title": "unrelated video", "duration": 30, "view_count": 900, "timestamp": now - 3600, "channel": "X"},
+            {"id": "v4", "title": "Togi on his own channel", "duration": 50, "view_count": 900, "timestamp": now - 3600, "channel": "TOGI", "uploader_id": "@TOGI"}]
+    monkeypatch.setattr(youtube, "_search", fake_search)
+    found = youtube.search_channels(cfg, "togi")
+    assert found[0] == {"login": "@TOGI", "name": "TOGI", "image": "https://img/1.jpg", "live": False,
+                        "game": "1,200,000 subscribers"}
+    assert found[1]["login"].endswith("UCabcdefghijklmnopqrstuv")
+    assert youtube.search_channels(cfg, "to") == []                                   # too short to bother
+
+    cfg.min_views, cfg.game = 50, ""
+    creator = Creator("youtube", "@TOGI", name="TOGI", all_content=True)
+    clips = youtube._others_uploads(cfg, creator, datetime_now())
+    assert [c.id for c in clips] == ["youtube:v1", "youtube:v4"]                      # too long / off-topic dropped
+    assert clips[0].uploader == "ClipKing" and clips[1].uploader == ""                 # other clipper credited
+    assert clips[0].preview.startswith("https://www.youtube.com/embed/v1")
+    assert db.credit_line(clips[0]) == "youtube.com/@TOGI (clip via ClipKing)"
+
+
+def test_kick_channel_search_parses_and_sorts_live_first(cfg, monkeypatch):
+    from clipz.sources import kick
+    monkeypatch.setattr(kick, "_get", lambda url, **p: {"channels": [
+        {"slug": "togi_fan", "is_live": False, "followers_count": 10, "user": {"username": "Togi_Fan"}},
+        {"slug": "togi", "is_live": True, "followers_count": 250000, "user": {"username": "TOGI", "profile_pic": "p.jpg"}}]})
+    res = kick.search_channels(cfg, "togi")
+    assert [r["login"] for r in res] == ["togi", "togi_fan"]
+    assert res[0] == {"login": "togi", "name": "TOGI", "image": "p.jpg", "live": True, "game": "250,000 followers"}
+
+
+def test_old_finds_are_pruned(con):
+    db.add(con, clip("old", created_at="2020-01-01T00:00:00+00:00"))
+    db.add(con, clip("kept", created_at="2020-01-01T00:00:00+00:00", status="rendered"))
+    db.add(con, clip("new", created_at="2099-01-01T00:00:00+00:00"))
+    assert db.prune(con, "2024-01-01T00:00:00+00:00") == 1
+    assert sorted(c.id for c in db.all_clips(con)) == ["twitch:kept", "twitch:new"]
+
+
+def datetime_now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)

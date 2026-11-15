@@ -14,7 +14,7 @@ import requests
 
 from . import tokens
 from ..config import Config
-from ..db import Clip
+from ..db import Clip, credit_line
 
 NAME = "instagram"
 GRAPH = "https://graph.instagram.com/v21.0"
@@ -73,7 +73,7 @@ def _account(cfg: Config) -> dict:
 
 def caption(clip: Clip, hashtags: list[str]) -> str:
     tags = " ".join(f"#{t.lstrip('#')}" for t in hashtags)
-    return f"{clip.title.strip()}\n\nClip credit: {clip.credit}\n\n{tags}".strip()[:2200]
+    return f"{clip.title.strip()}\n\nClip credit: {credit_line(clip)}\n\n{tags}".strip()[:2200]
 
 
 def upload(cfg: Config, clip: Clip, sleep=time.sleep) -> str:

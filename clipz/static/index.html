@@ -66,6 +66,19 @@
   .filters button.on { border-color: var(--accent); color: var(--text); }
   code { background: var(--bg); padding: 1px 6px; border-radius: 6px; overflow-wrap: anywhere; }
   .hidden { display: none; }
+  .feed { display: flex; flex-direction: column; gap: 16px; max-width: 560px; margin: 0 auto; }
+  .find { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .find .player { position: relative; aspect-ratio: 16/9; background: #000; }
+  .find .player img, .find .player iframe, .find .player video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; object-fit: cover; }
+  .find .player video { object-fit: contain; }
+  .find .play { position: absolute; inset: 0; display: grid; place-items: center; background: none; border: 0; border-radius: 0; padding: 0; }
+  .find .play span { width: 64px; height: 64px; border-radius: 50%; background: rgba(0,0,0,.6); display: grid; place-items: center; font-size: 26px; color: #fff; }
+  .find .player .length { position: absolute; right: 8px; bottom: 8px; background: rgba(0,0,0,.75); color: #fff; font-size: 12px; padding: 1px 6px; border-radius: 4px; }
+  .find .body { padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 14px; }
+  .chips button { white-space: nowrap; border-radius: 99px; }
+  .chips button.on { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .cat-head { margin: 18px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
   .suggest-wrap { position: relative; flex: 1 1 220px; min-width: 0; display: flex; }
   .suggest-wrap > input { flex: 1; min-width: 0; }
   .suggest { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 5; list-style: none; margin: 0;
@@ -106,7 +119,8 @@
 </header>
 <main>
   <nav id="tabs"></nav>
-  <section id="clips"></section>
+  <section id="browse"></section>
+  <section id="clips" class="hidden"></section>
   <section id="streamers" class="hidden"></section>
   <section id="accounts" class="hidden"></section>
   <section id="settings" class="hidden"></section>
@@ -117,9 +131,9 @@
   </div>
 </main>
 <script>
-const TABS = { clips: "Clips", streamers: "Streamers", accounts: "Accounts", settings: "Settings" };
+const TABS = { browse: "Browse", clips: "Edited", streamers: "Streamers", accounts: "Accounts", settings: "Settings" };
 const FILTERS = { queued: "Being edited", rendered: "To review", approved: "Approved", published: "Posted", rejected: "Rejected", failed: "Failed" };
-let S = null, tab = (location.hash.slice(1) in TABS) ? location.hash.slice(1) : "clips", filter = "rendered";
+let S = null, tab = (location.hash.slice(1) in TABS) ? location.hash.slice(1) : "browse", filter = "rendered";
 let editing = null, pick = null;  // clip id open in the editor, and the choices made there so far
 let dirty = false;  // true while the user is typing in a form, so refreshes don't wipe their input
 
@@ -128,7 +142,7 @@ function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
     if (k === "on") for (const [ev, fn] of Object.entries(v)) el.addEventListener(ev, fn);
-    else if (k in el) el[k] = v; else el.setAttribute(k, v);
+    else if (k in el && k !== "list") el[k] = v; else el.setAttribute(k, v);  // "list" is read-only as a property
   }
   for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid);
   return el;
@@ -157,8 +171,90 @@ async function refresh() {
   if (atBottom) log.scrollTop = log.scrollHeight;
   renderTabs();
   if (editing) renderEditor();
-  if (tab === "clips") renderClips();
+  const jobEnded = lastJob && !S.job;
+  lastJob = S.job;
+  if (tab === "browse") { if (!browse.loaded || jobEnded) loadBrowse(true); }
+  else if (tab === "clips") renderClips();
   else if (!dirty) ({ streamers: renderStreamers, accounts: renderAccounts, settings: renderSettings })[tab]();
+}
+
+// ---- Browse: everything Clipz found, to watch and pick from ----------------------------------
+let lastJob = "";
+const browse = { loaded: false, category: "", clips: [], total: 0, loading: false, playing: null };
+const ago = iso => {
+  const h = (Date.now() - new Date(iso).getTime()) / 3.6e6;
+  return !isFinite(h) ? "" : h < 1 ? Math.max(1, Math.round(h * 60)) + "m ago" : h < 48 ? Math.round(h) + "h ago" : Math.round(h / 24) + "d ago";
+};
+const mmss = sec => sec ? `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}` : "";
+
+async function loadBrowse(reset) {
+  if (browse.loading) return;
+  browse.loading = true;
+  if (reset) { browse.clips = []; browse.playing = null; }
+  const q = new URLSearchParams({ category: browse.category, offset: browse.clips.length, limit: 20 });
+  const data = await (await fetch("/api/browse?" + q)).json().catch(() => ({ clips: [], total: 0 }));
+  browse.clips.push(...(data.clips || [])); browse.total = data.total || 0; browse.loaded = true; browse.loading = false;
+  renderBrowse();
+}
+
+function playerFor(c) {
+  if (c.platform === "kick" && c.preview)
+    return h("video", { src: c.preview, controls: true, autoplay: true, playsInline: true });
+  const url = c.platform === "twitch" ? `${c.preview}&parent=${location.hostname}&autoplay=true`
+    : c.preview + (c.preview.includes("?") ? "&" : "?") + "autoplay=1";
+  return h("iframe", { src: url, allow: "autoplay; fullscreen; encrypted-media", allowFullscreen: true });
+}
+
+function findCard(c) {
+  const player = h("div", { className: "player" });
+  const still = () => player.replaceChildren(
+    c.thumbnail ? h("img", { src: c.thumbnail, alt: "", loading: "lazy" }) : null,
+    c.preview
+      ? h("button", { className: "play", title: "Play", on: { click: () => {
+          if (browse.playing && browse.playing !== still) browse.playing();   // stop the other one
+          browse.playing = still;
+          player.replaceChildren(playerFor(c));
+        } } }, h("span", {}, "▶"))
+      : h("a", { href: c.url, target: "_blank", rel: "noopener", className: "play", title: "Watch on " + c.platform }, h("span", {}, "↗")),
+    c.duration ? h("span", { className: "length" }, mmss(c.duration)) : null);
+  still();
+  const id = encodeURIComponent(c.id);
+  const act = async (action) => {
+    if (!(await api("POST", `/api/clips/${id}/${action}`))) return;
+    if (action === "skip") { browse.clips = browse.clips.filter(x => x.id !== c.id); browse.total--; }
+    else c.status = "queued";
+    renderBrowse();
+  };
+  const state = {
+    discovered: [h("button", { className: "primary", on: { click: () => act("edit") } }, "Edit this clip"),
+                 h("button", { on: { click: () => act("skip") } }, "Skip")],
+    queued: h("span", { className: "badge" }, "Being edited…"),
+    failed: [h("span", { className: "badge failed" }, "Failed"), h("button", { on: { click: () => act("edit") } }, "Try again")],
+  }[c.status] || h("span", { className: "badge approved" }, "Edited - see the Edited tab");
+  return h("div", { className: "find" }, player,
+    h("div", { className: "body" },
+      h("div", { className: "title" }, c.title || "(untitled)"),
+      h("div", { className: "muted" }, [c.streamer, c.platform, `${(c.views || 0).toLocaleString()} views`, ago(c.created_at)].filter(Boolean).join(" · ")),
+      c.uploader ? h("div", { className: "muted" }, "Posted by " + c.uploader) : null,
+      h("div", { className: "row" }, h("span", { className: "badge" }, c.category), h("span", { style: "flex:1" }), state)));
+}
+
+function renderBrowse() {
+  const cats = ["", ...(S.categories || [])];
+  const chips = h("div", { className: "chips" }, cats.map(cat =>
+    h("button", { className: cat === browse.category ? "on" : "", on: { click: () => { browse.category = cat; loadBrowse(true); } } }, cat || "All")));
+  const sentinel = h("div", { style: "height:1px" });
+  const feed = h("div", { className: "feed" }, browse.clips.map(findCard), sentinel);
+  const empty = !S.creators.length ? "Add streamers on the Streamers tab, then press \"Find new clips\"."
+    : S.job ? "Looking for clips…" : "Nothing found yet. Press \"Find new clips\" to look.";
+  $("browse").replaceChildren(chips,
+    h("div", { className: "row muted", style: "margin-bottom:10px" }, `${browse.total} clip${browse.total === 1 ? "" : "s"} found`,
+      h("span", { style: "flex:1" }), h("button", { on: { click: () => loadBrowse(true) } }, "Refresh")),
+    browse.clips.length ? feed : h("p", { className: "muted" }, empty));
+  if (browse.clips.length < browse.total) {
+    new IntersectionObserver((entries, obs) => { if (entries[0].isIntersecting) { obs.disconnect(); loadBrowse(false); } })
+      .observe(sentinel);
+  }
 }
 
 function renderTabs() {
@@ -185,7 +281,7 @@ function renderClips() {
   if (root.dataset.key === key) { root.firstChild.replaceWith(bar); return; }  // keep videos playing
   root.dataset.key = key;
   const empty = filter === "rendered"
-    ? `No clips waiting for review. Press "Find new clips" to look.` + (S.waiting ? ` (${S.waiting} more found but not yet edited.)` : "")
+    ? "No edited clips waiting for review. Pick clips to edit on the Browse tab." + (S.waiting ? ` (${S.waiting} found there so far.)` : "")
     : "Nothing here.";
   root.replaceChildren(bar, shown.length ? h("div", { className: "grid" }, shown.map(clipCard)) : h("p", { className: "muted" }, empty));
 }
@@ -298,36 +394,40 @@ async function approveAll() {
 }
 
 function renderStreamers() {
-  const platform = h("select", {}, ["twitch", "kick", "youtube"].map(p => h("option", { value: p }, p[0].toUpperCase() + p.slice(1))));
+  const platform = h("select", {}, [["twitch", "Twitch"], ["kick", "Kick"], ["youtube", "YouTube"]].map(([v, n]) => h("option", { value: v }, n)));
   const channel = h("input", { type: "text", autocomplete: "off", autocapitalize: "off", spellcheck: false,
     placeholder: "Start typing a streamer's name…" });
+  platform.addEventListener("change", () => { channel.value = ""; pickedName = ""; });
   const menu = h("ul", { className: "suggest hidden", role: "listbox" });
   let results = [], active = -1, timer = null, asked = "";
   const hint = h("div", { className: "muted", style: "margin-top:6px;font-size:13px" });
-  const setHint = () => {
-    hint.textContent = platform.value !== "twitch" ? "Type the exact channel name (suggestions are only available for Twitch)."
-      : S.accounts.twitch ? "" : "Connect Twitch in Settings to get suggestions as you type.";
+  const minChars = () => platform.value === "youtube" ? 3 : 2;
+  const setHint = (msg) => {
+    hint.textContent = msg ?? (platform.value === "twitch" && !S.accounts.twitch ? "Connect Twitch in Settings to get suggestions as you type."
+      : platform.value === "youtube" ? "Type a channel name - suggestions take a second on YouTube." : "");
   };
   const close = () => { menu.classList.add("hidden"); active = -1; };
-  const choose = r => { channel.value = r.login; close(); };
+  const choose = r => { channel.value = r.login; pickedName = r.name; close(); };
   const paint = () => {
     menu.replaceChildren(...results.map((r, i) => h("li", { className: i === active ? "on" : "", role: "option",
         on: { mousedown: e => { e.preventDefault(); choose(r); } } },
       r.image ? h("img", { src: r.image, alt: "", loading: "lazy" }) : h("img", { alt: "" }),
       h("div", { className: "who" }, h("div", {}, r.name, " ", r.live ? h("span", { className: "live" }, "LIVE") : null),
-        h("div", { className: "muted", style: "font-size:13px" }, r.game || "twitch.tv/" + r.login)))));
+        h("div", { className: "muted", style: "font-size:13px" }, r.game || r.login)))));
     menu.classList.toggle("hidden", !results.length);
   };
   const lookup = async () => {
     const q = channel.value.trim();
-    if (platform.value !== "twitch" || !S.accounts.twitch || q.length < 2) { results = []; return close(); }
+    pickedName = "";
+    if (q.length < minChars() || (platform.value === "twitch" && !S.accounts.twitch)) { results = []; return close(); }
     asked = q;
-    const r = await fetch(`/api/search/streamers?platform=twitch&q=${encodeURIComponent(q)}`);
+    const r = await fetch(`/api/search/streamers?platform=${platform.value}&q=${encodeURIComponent(q)}`);
     const data = await r.json().catch(() => ({ results: [] }));
     if (asked !== q || channel.value.trim() !== q) return;  // a newer search is on its way
     results = data.results || []; active = -1; paint();
+    setHint(data.error || (results.length ? "" : undefined));
   };
-  channel.addEventListener("input", () => { dirty = true; clearTimeout(timer); timer = setTimeout(lookup, 250); });
+  channel.addEventListener("input", () => { dirty = true; clearTimeout(timer); timer = setTimeout(lookup, platform.value === "youtube" ? 450 : 250); });
   channel.addEventListener("keydown", e => {
     if (menu.classList.contains("hidden")) return;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -341,20 +441,29 @@ function renderStreamers() {
   setHint();
   const game = S.settings.game;
   const what = h("select", {}, game ? h("option", { value: "" }, `Only ${game} clips`) : null, h("option", { value: "all" }, "All their clips (any category)"));
+  const cats = S.categories || [];
+  const catList = h("datalist", { id: "cat-list" }, cats.map(cat => h("option", { value: cat })));
+  const category = h("input", { type: "text", value: (() => { try { return localStorage.getItem("clipz-cat"); } catch { return ""; } })() || cats[0] || "", list: "cat-list",
+    placeholder: "Category, e.g. GTA 6 or IRL", on: { input: () => dirty = true } });
+  let pickedName = "";
   const tags = h("input", { type: "text", placeholder: "Hashtags for this streamer (optional), e.g. togi, irl", on: { input: () => dirty = true } });
-  const add = () => api("POST", "/api/creators", { platform: platform.value, channel: channel.value,
-    all_content: what.value === "all", hashtags: tags.value.split(",").map(s => s.trim()).filter(Boolean) });
+  const add = () => { try { localStorage.setItem("clipz-cat", category.value.trim()); } catch {}
+    return api("POST", "/api/creators", { platform: platform.value, channel: channel.value, category: category.value, name: pickedName,
+    all_content: what.value === "all", hashtags: tags.value.split(",").map(s => s.trim()).filter(Boolean) }); };
   $("streamers").replaceChildren(h("div", { className: "panel" },
     h("h2", {}, "Streamers to clip"),
     h("p", { className: "muted" }, "Clipz only looks at channels on this list. Stick to creators who run a clipping program or have said it's OK - posting footage without permission gets channels struck."),
     h("div", { className: "row" }, platform, h("div", { className: "suggest-wrap" }, channel, menu)),
     hint,
-    h("div", { className: "row", style: "margin-top:10px" }, what, tags, h("button", { className: "primary", on: { click: add } }, "Add")),
-    h("ul", { className: "list" }, S.creators.length ? S.creators.map(c =>
-      h("li", {}, h("span", {}, c.channel, c.hashtags.length ? h("span", { className: "muted" }, "  #" + c.hashtags.join(" #")) : null),
-        h("span", { className: "badge" }, c.all_content || !game ? "All clips" : game + " only"), h("span", { className: "badge" }, c.platform),
-        h("button", { className: "ghost-bad", on: { click: () => api("DELETE", "/api/creators", c) } }, "Remove")))
-      : h("li", { className: "muted" }, "No streamers yet."))));
+    h("div", { className: "row", style: "margin-top:10px" }, category, catList, what),
+    h("div", { className: "row", style: "margin-top:10px" }, tags, h("button", { className: "primary", on: { click: add } }, "Add")),
+    S.creators.length ? cats.flatMap(cat => [
+      h("h3", { className: "cat-head" }, cat),
+      h("ul", { className: "list" }, S.creators.filter(c => c.category === cat).map(c =>
+        h("li", {}, h("span", {}, c.name || c.channel, c.hashtags.length ? h("span", { className: "muted" }, "  #" + c.hashtags.join(" #")) : null),
+          h("span", { className: "badge" }, c.all_content || !game ? "All clips" : game + " only"), h("span", { className: "badge" }, c.platform),
+          h("button", { className: "ghost-bad", on: { click: () => api("DELETE", "/api/creators", c) } }, "Remove"))))])
+      : h("p", { className: "muted", style: "margin-top:14px" }, "No streamers yet.")));
 }
 
 function field(label, input) { return h("label", { className: "field" }, label, input); }
@@ -440,7 +549,7 @@ function renderSettings() {
         field("Game (Twitch category name; blank = any)", f.game), field("YouTube title must contain one of", f.keywords), field("Hashtags on posts", f.hashtags)),
       h("div", { className: "row", style: "margin-top:10px" },
         field("Only clips newer than (hours)", f.lookback_hours), field("Minimum views", f.min_views),
-        field("Clips to edit per search", f.max_clips_per_run), field("Max clip length (seconds)", f.max_duration)),
+        field("Auto-edit the best N clips per search (0 = pick them yourself in Browse)", f.max_clips_per_run), field("Max clip length (seconds)", f.max_duration)),
       h("div", { className: "row", style: "margin-top:10px" }, field("Layout for new clips (change any clip later by clicking it)", f.layout))),
     h("div", { className: "panel" },
       h("h2", {}, "Autopilot"),

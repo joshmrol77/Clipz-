@@ -21,10 +21,11 @@ Your browser opens at <http://127.0.0.1:8777>. Everything is done from four tabs
 
 | Tab | What you do there |
 |---|---|
-| **Streamers** | Add or remove the channels Clipz watches. For each one choose "only the game" or "all their clips" (IRL, chatting, anything), and optionally give them their own hashtags. |
-| **Settings** | Paste your Twitch keys, choose the game, turn on autopilot. |
+| **Browse** | Every clip Clipz found, best first, filtered by category. Play them right there, then **Edit this clip** or **Skip**. |
+| **Edited** | Your picked clips as finished vertical videos: change the layout, then Approve or Reject. |
+| **Streamers** | Search for streamers on Twitch, Kick or YouTube as you type, put each in a category (e.g. "GTA 6", "IRL"), choose "only the game" or "all their clips", and optionally give them their own hashtags. |
 | **Accounts** | Connect YouTube, TikTok and Instagram. |
-| **Clips** | Watch each edited clip, then Approve or Reject it. |
+| **Settings** | Connect Twitch, choose the game, turn on autopilot or auto-editing. |
 
 The two buttons at the top do the work: **Find new clips** searches, downloads and edits;
 **Post approved clips** sends every approved clip to every connected account.
@@ -101,8 +102,9 @@ Each platform makes you register a free developer app before software may act fo
 - **Twitch** - official API: each streamer's clips from the last `lookback_hours` in the
   configured game, ranked by views per hour. Scores refresh on every search, so a clip that
   blows up later moves to the front.
-- **YouTube** - no clips API exists, so it takes each creator's recent videos whose title
-  matches the keywords and cuts the 45 s "most replayed" section.
+- **YouTube** - no clips API exists, so for each YouTube streamer it looks at their own recent
+  videos (cutting the 45 s "most replayed" section) and searches YouTube for today's short
+  videos naming them, from any channel - usually other clippers, who are credited in posts.
 - **Kick** - experimental. Kick has no documented clips API; this uses the website's own
   endpoint, which may be blocked or change.
 

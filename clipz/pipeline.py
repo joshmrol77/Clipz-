@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+from datetime import datetime, timedelta, timezone
 
 from . import db, download as dl, files, publish, render as rn, sources
 from .config import Config
@@ -13,13 +14,18 @@ def discover(cfg: Config, con, log=print) -> int:
         log("No streamers on your list yet - add some first.")
         return 0
     log("Looking for new clips...")
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    db.prune(con, week_ago)   # finds you never picked, from over a week ago
     new = sum(db.add(con, c) for c in sources.discover(cfg, log))
-    log(f"{new} new clip(s) found")
+    log(f"{new} new clip(s) found - see Browse")
     return new
 
 
 def queue_top(cfg: Config, con) -> list[str]:
-    """Mark the best clips found so far as next in line to be downloaded and edited."""
+    """Auto-edit: mark the best clips found so far as next in line to be downloaded and edited.
+    max_clips_per_run = 0 means you pick every clip yourself in Browse."""
+    if cfg.max_clips_per_run <= 0:
+        return []
     ids = [c.id for c in db.by_status(con, "discovered", cfg.max_clips_per_run)]
     for clip_id in ids:
         db.update(con, clip_id, status="queued")
@@ -29,7 +35,7 @@ def queue_top(cfg: Config, con) -> list[str]:
 def find_and_render(cfg: Config, con, log=print) -> None:
     """Everything at once - used by `clipz run`."""
     discover(cfg, con, log)
-    process(cfg, con, db.by_status(con, "discovered", cfg.max_clips_per_run), log)
+    process(cfg, con, db.by_status(con, "discovered", cfg.max_clips_per_run or 10), log)
 
 
 def backgrounds(cfg: Config) -> list[str]:

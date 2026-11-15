@@ -96,5 +96,8 @@ def discover(cfg: Config, creators: list[Creator]) -> list[Clip]:
                 id=f"twitch:{d['id']}", platform="twitch", creator=c.channel, credit=c.credit,
                 title=d["title"], url=d["url"], views=d["view_count"], created_at=d["created_at"],
                 duration=d["duration"], score=velocity(d["view_count"], d["created_at"], now),
+                thumbnail=d.get("thumbnail_url", ""),
+                preview=f"https://clips.twitch.tv/embed?clip={d['id']}",
+                uploader=d.get("creator_name", ""),
             ))
     return out
