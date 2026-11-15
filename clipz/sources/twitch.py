@@ -1,10 +1,12 @@
 """Twitch clips via the official Helix API (app access token)."""
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 
 import requests
 
+from .. import db
 from ..config import Config, Creator
 from ..db import Clip
 from ..rank import velocity
@@ -33,9 +35,28 @@ def _session(cfg: Config) -> requests.Session:
     cid, secret = cfg.twitch.get("client_id"), cfg.twitch.get("client_secret")
     if not cid or not secret:
         raise RuntimeError("Twitch isn't connected - connect it in Settings")
+    # App tokens last about two months; reuse one rather than asking Twitch on every search.
+    con = cfg.connect()
+    cached = db.kv_get(con, "twitch_app_token") or {}
+    if cached.get("client_id") != cid or cached.get("expires_at", 0) < time.time():
+        cached = {"client_id": cid, "token": app_token(cid, secret), "expires_at": time.time() + 24 * 3600}
+        db.kv_set(con, "twitch_app_token", cached)
     s = requests.Session()
-    s.headers.update({"Client-Id": cid, "Authorization": f"Bearer {app_token(cid, secret)}"})
+    s.headers.update({"Client-Id": cid, "Authorization": f"Bearer {cached['token']}"})
     return s
+
+
+def search_channels(cfg: Config, query: str, limit: int = 8) -> list[dict]:
+    """Channels whose name matches what's been typed so far, live ones first."""
+    query = query.strip()
+    if len(query) < 2:
+        return []
+    found = _get(_session(cfg), "search/channels", query=query, first=20)
+    found.sort(key=lambda d: (not d.get("is_live"), d["broadcaster_login"] != query.lower()))
+    return [{
+        "login": d["broadcaster_login"], "name": d["display_name"], "image": d.get("thumbnail_url", ""),
+        "live": bool(d.get("is_live")), "game": d.get("game_name", ""),
+    } for d in found[:limit]]
 
 
 def _get(s: requests.Session, path: str, **params) -> list[dict]:

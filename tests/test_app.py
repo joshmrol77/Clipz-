@@ -32,11 +32,11 @@ def post(client, url, body=None, method="post"):
     return getattr(client, method)(url, data=json.dumps(body or {}), **JSON)
 
 
-def test_add_and_remove_streamer_requires_permission(env):
+def test_add_and_remove_streamer(env):
     client, _ = env
-    assert post(client, "/api/creators", {"platform": "twitch", "channel": "abc"}).status_code == 400
-    assert post(client, "/api/creators", {"platform": "twitch", "channel": "abc", "permission": True}).status_code == 200
-    assert post(client, "/api/creators", {"platform": "twitch", "channel": "ABC", "permission": True}).status_code == 400
+    assert post(client, "/api/creators", {"platform": "twitch", "channel": ""}).status_code == 400
+    assert post(client, "/api/creators", {"platform": "twitch", "channel": "abc"}).status_code == 200
+    assert post(client, "/api/creators", {"platform": "twitch", "channel": "ABC"}).status_code == 400   # duplicate
     creators = client.get("/api/state").get_json()["creators"]
     assert creators == [{"platform": "twitch", "channel": "abc", "credit": "twitch.tv/abc",
                          "all_content": False, "hashtags": []}]
@@ -257,3 +257,20 @@ def test_twitch_connect_checks_keys_and_disconnect_clears_them(env, monkeypatch)
     assert state["accounts"]["twitch"] is True and "good" not in json.dumps(state)
     assert post(client, "/api/disconnect/twitch").status_code == 200
     assert client.get("/api/state").get_json()["accounts"]["twitch"] is False
+
+
+def test_streamer_search_suggests_twitch_channels_live_first(env, monkeypatch):
+    from clipz.sources import twitch
+    client, _ = env
+    assert client.get("/api/search/streamers?platform=twitch&q=to").get_json()["results"] == []   # not connected
+    config.save_settings(config.load("config.toml"), {"twitch": {"client_id": "cid", "client_secret": "s"}})
+    tokens_asked = []
+    monkeypatch.setattr(twitch, "app_token", lambda cid, secret: tokens_asked.append(1) or "tok")
+    monkeypatch.setattr(twitch, "_get", lambda s, path, **p: [
+        {"broadcaster_login": "togi_fan", "display_name": "Togi_Fan", "is_live": False, "game_name": "", "thumbnail_url": "a"},
+        {"broadcaster_login": "togi", "display_name": "TOGI", "is_live": True, "game_name": "Just Chatting", "thumbnail_url": "b"}])
+    results = client.get("/api/search/streamers?platform=twitch&q=togi").get_json()["results"]
+    assert [r["login"] for r in results] == ["togi", "togi_fan"] and results[0]["live"] is True
+    client.get("/api/search/streamers?platform=twitch&q=togi")
+    assert tokens_asked == [1]                                                  # token reused
+    assert client.get("/api/search/streamers?platform=kick&q=togi").get_json()["results"] == []

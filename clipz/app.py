@@ -222,8 +222,6 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
     @app.post("/api/creators")
     def add_creator():
         body = request.get_json()
-        if not body.get("permission"):
-            return jsonify(error="Tick the box to confirm you're allowed to clip this creator."), 400
         try:
             new = Creator(body.get("platform", ""), body.get("channel", ""), body.get("credit", ""),
                           bool(body.get("all_content")), list(body.get("hashtags") or []))
@@ -234,6 +232,17 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             return jsonify(error="That streamer is already on your list."), 400
         config.save_settings(c, {"creators": [asdict(x) for x in [*c.creators, new]]})
         return jsonify(ok=True)
+
+    @app.get("/api/search/streamers")
+    def search_streamers():
+        """Suggestions while typing a channel name. Only Twitch has a search Clipz can use."""
+        c = cfg()
+        if request.args.get("platform") != "twitch" or not (c.twitch.get("client_id") and c.twitch.get("client_secret")):
+            return jsonify(results=[])
+        try:
+            return jsonify(results=twitch_source.search_channels(c, request.args.get("q", "")))
+        except Exception as e:
+            return jsonify(results=[], error=str(e)[:200])
 
     @app.delete("/api/creators")
     def remove_creator():
