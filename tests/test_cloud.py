@@ -71,7 +71,8 @@ def test_log_keeps_newest_entries_in_order(con, monkeypatch):
 @pytest.fixture
 def cfg(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("BLOB_READ_WRITE_TOKEN", raising=False)
+    for var in ("BLOB_READ_WRITE_TOKEN", "VERCEL_BLOB_READ_WRITE_TOKEN", "BLOB_STORE_ID"):
+        monkeypatch.delenv(var, raising=False)
     return config.load("config.toml")
 
 
@@ -233,7 +234,7 @@ def test_cloud_mode_never_runs_without_a_password(tmp_path, monkeypatch):
 
 def test_vercel_shows_setup_checklist_until_configured(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    for var in ("CLIPZ_PASSWORD", "DATABASE_URL", "POSTGRES_URL", "BLOB_READ_WRITE_TOKEN"):
+    for var in ("CLIPZ_PASSWORD", "DATABASE_URL", "POSTGRES_URL", "BLOB_READ_WRITE_TOKEN", "BLOB_STORE_ID"):
         monkeypatch.delenv(var, raising=False)
     page = create_vercel_app().test_client().get("/anything").get_data(as_text=True)
     assert "CLIPZ_PASSWORD" in page and "Neon" in page and "Blob" in page
@@ -289,3 +290,21 @@ def test_real_edit_through_the_pipeline(cfg, tmp_path, layout):
     done = db.get(con, "twitch:a")
     assert (done.status, done.error) == ("rendered", ""), log
     assert os.path.getsize(done.out_path) > 1000
+
+
+def test_blob_key_found_under_a_custom_prefix(monkeypatch):
+    for var in ("BLOB_READ_WRITE_TOKEN", "VERCEL_BLOB_READ_WRITE_TOKEN", "BLOB_STORE_ID"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("CLIPZ_VIDEOS_READ_WRITE_TOKEN", "vercel_blob_rw_abc_123")
+    monkeypatch.setenv("OTHER_READ_WRITE_TOKEN", "not-a-blob-key")
+    assert files.cloud()
+    assert os.environ["BLOB_READ_WRITE_TOKEN"] == "vercel_blob_rw_abc_123"
+
+
+def test_blob_store_id_connection_counts_as_connected(monkeypatch):
+    for var in list(os.environ):
+        if var.endswith(("_READ_WRITE_TOKEN", "_STORE_ID")):
+            monkeypatch.delenv(var)
+    assert not files.cloud()
+    monkeypatch.setenv("CLIPZ_VIDEOS_STORE_ID", "store_AbC123")
+    assert files.cloud() and os.environ["BLOB_STORE_ID"] == "store_AbC123"

@@ -1,6 +1,5 @@
 """Where videos live. On your own computer: files in the data folder, and a clip's `src_path` /
-`out_path` is a file path. In the cloud (BLOB_READ_WRITE_TOKEN set, as Vercel does when a Blob
-store is connected): files are uploaded to Vercel Blob and those fields hold the file's URL.
+`out_path` is a file path. In the cloud (a Vercel Blob store connected to the project): files are uploaded to Vercel Blob and those fields hold the file's URL.
 Blob URLs carry a long random suffix, so they can't be guessed; anything Clipz edits is meant
 to be posted publicly anyway. Sign-ins and keys are never stored here - they're in the database.
 """
@@ -18,8 +17,25 @@ from .config import Config
 from . import db
 
 
+def _adopt(suffix: str, target: str, looks_like: str) -> bool:
+    """Vercel names storage settings with a prefix chosen when the store is connected (BLOB by
+    default). Copy a custom-prefixed one to the name the Vercel SDK reads."""
+    if os.environ.get(target):
+        return True
+    for key, value in os.environ.items():
+        if key.endswith(suffix) and value.strip().startswith(looks_like):
+            os.environ[target] = value.strip()
+            return True
+    return False
+
+
 def cloud() -> bool:
-    return bool(os.environ.get("BLOB_READ_WRITE_TOKEN"))
+    """Is a Vercel Blob store connected? Newer connections provide a store ID and sign in with
+    Vercel's built-in identity (OIDC); older ones provide a read-write key."""
+    if os.environ.get("VERCEL_BLOB_READ_WRITE_TOKEN"):
+        return True
+    return (_adopt("_READ_WRITE_TOKEN", "BLOB_READ_WRITE_TOKEN", "vercel_blob_rw_")
+            or _adopt("_STORE_ID", "BLOB_STORE_ID", "store_"))
 
 
 def is_url(ref: str) -> bool:
