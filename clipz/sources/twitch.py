@@ -12,18 +12,29 @@ from ..rank import velocity
 API = "https://api.twitch.tv/helix"
 
 
+def app_token(client_id: str, client_secret: str) -> str:
+    """Exchange the app's keys for an access token. Also how we check the keys are right."""
+    try:
+        r = requests.post(
+            "https://id.twitch.tv/oauth2/token",
+            data={"client_id": client_id, "client_secret": client_secret, "grant_type": "client_credentials"},
+            timeout=30,
+        )
+    except requests.RequestException:
+        raise RuntimeError("Couldn't reach Twitch - check your connection and try again in a minute")
+    if r.status_code in (400, 401, 403):
+        raise RuntimeError("Twitch didn't accept that Client ID and secret - check them on "
+                           "dev.twitch.tv/console/apps (make a New Secret if unsure)")
+    r.raise_for_status()
+    return r.json()["access_token"]
+
+
 def _session(cfg: Config) -> requests.Session:
     cid, secret = cfg.twitch.get("client_id"), cfg.twitch.get("client_secret")
     if not cid or not secret:
-        raise RuntimeError("set [twitch] client_id and client_secret in config.toml")
-    r = requests.post(
-        "https://id.twitch.tv/oauth2/token",
-        data={"client_id": cid, "client_secret": secret, "grant_type": "client_credentials"},
-        timeout=30,
-    )
-    r.raise_for_status()
+        raise RuntimeError("Twitch isn't connected - connect it in Settings")
     s = requests.Session()
-    s.headers.update({"Client-Id": cid, "Authorization": f"Bearer {r.json()['access_token']}"})
+    s.headers.update({"Client-Id": cid, "Authorization": f"Bearer {app_token(cid, secret)}"})
     return s
 
 

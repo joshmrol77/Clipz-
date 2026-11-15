@@ -238,3 +238,22 @@ def test_home_screen_icon_and_manifest_load_before_sign_in(tmp_path, monkeypatch
     assert client.get("/static/icon-512.png").mimetype == "image/png"
     assert client.get("/static/app.py").status_code == 404          # only the listed files are served
     assert client.get("/static/index.html").status_code == 404      # the app itself still needs sign-in
+
+
+def test_twitch_connect_checks_keys_and_disconnect_clears_them(env, monkeypatch):
+    from clipz.sources import twitch
+    client, _ = env
+    def fake_token(cid, secret):
+        if secret != "good":
+            raise RuntimeError("Twitch didn't accept that Client ID and secret")
+        return "tok"
+    monkeypatch.setattr(twitch, "app_token", fake_token)
+    assert client.get("/api/state").get_json()["accounts"]["twitch"] is False
+    r = post(client, "/api/connect/twitch", {"client_id": "abc", "client_secret": "bad"})
+    assert r.status_code == 400 and "didn't accept" in r.get_json()["error"]
+    assert client.get("/api/state").get_json()["accounts"]["twitch"] is False
+    assert post(client, "/api/connect/twitch", {"client_id": "abc", "client_secret": "good"}).status_code == 200
+    state = client.get("/api/state").get_json()
+    assert state["accounts"]["twitch"] is True and "good" not in json.dumps(state)
+    assert post(client, "/api/disconnect/twitch").status_code == 200
+    assert client.get("/api/state").get_json()["accounts"]["twitch"] is False

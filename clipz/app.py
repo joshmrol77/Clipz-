@@ -30,6 +30,7 @@ from werkzeug.utils import secure_filename
 from . import config, db, download, files, pipeline, publish, render, worker
 from .config import Creator
 from .publish import instagram, tiktok, youtube
+from .sources import twitch as twitch_source
 
 SECRET_FIELDS = {"twitch": ["client_secret"], "youtube_upload": ["client_secret"], "tiktok": ["client_secret"]}
 STATIC = Path(__file__).parent / "static"
@@ -210,7 +211,9 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         return jsonify(
             creators=[asdict(x) for x in c.creators], clips=clips,
             waiting=len(db.by_status(con, "discovered")),
-            settings=settings, accounts={n: m.connected(c) for n, m in publish.PLATFORMS.items()},
+            settings=settings,
+            accounts={**{n: m.connected(c) for n, m in publish.PLATFORMS.items()},
+                      "twitch": bool(c.twitch.get("client_id") and c.twitch.get("client_secret"))},
             layouts=render.LAYOUTS, backgrounds=pipeline.backgrounds(c),
             tiktok_redirect=redirect_uri("tiktok"), youtube_redirect=redirect_uri("youtube"),
             hosted=bool(password), cloud=cloud, job=job, log=db.log_tail(con),
@@ -420,8 +423,26 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         say(f"Instagram connected{' as @' + username if username else ''}.")
         return jsonify(ok=True)
 
+    @app.post("/api/connect/twitch")
+    def connect_twitch():
+        body = request.get_json()
+        client_id, client_secret = (body.get("client_id") or "").strip(), (body.get("client_secret") or "").strip()
+        if not client_id or not client_secret:
+            return jsonify(error="Paste both the Client ID and the Client secret."), 400
+        try:
+            twitch_source.app_token(client_id, client_secret)
+        except Exception as e:
+            return jsonify(error=str(e)), 400
+        config.save_settings(cfg(), {"twitch": {"client_id": client_id, "client_secret": client_secret}})
+        say("Twitch connected.")
+        return jsonify(ok=True)
+
     @app.post("/api/disconnect/<name>")
     def disconnect(name):
+        if name == "twitch":
+            config.save_settings(cfg(), {"twitch": {"client_id": "", "client_secret": ""}})
+            say("Twitch disconnected.")
+            return jsonify(ok=True)
         if name not in publish.PLATFORMS:
             abort(404)
         publish.PLATFORMS[name].disconnect(cfg())

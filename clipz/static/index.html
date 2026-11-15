@@ -312,7 +312,11 @@ function field(label, input) { return h("label", { className: "field" }, label, 
 function text(value, placeholder = "", type = "text") {
   return h("input", { type, value: value ?? "", placeholder, on: { input: () => dirty = true } });
 }
-function secret(isSet) { return text("", isSet ? "saved - leave blank to keep" : "", "password"); }
+function secret(isSet) { return text("", isSet ? "Saved (type a new one to replace it)" : "", "password"); }
+const statusBadge = name => S.accounts[name] ? h("span", { className: "badge approved" }, "Connected") : h("span", { className: "badge" }, "Not connected");
+const disconnectButton = (name, label) => h("button", { className: "ghost-bad", on: { click: () => {
+  if (confirm(`Disconnect ${label}? You can connect it again any time.`)) api("POST", "/api/disconnect/" + name);
+} } }, "Disconnect");
 
 function renderAccounts() {
   const st = S.settings, yt = st.youtube_upload, tt = st.tiktok;
@@ -320,35 +324,35 @@ function renderAccounts() {
   const ytPrivacy = h("select", { on: { change: () => dirty = true } }, ["private", "unlisted", "public"].map(p => h("option", { value: p, selected: (yt.privacy || "private") === p }, p)));
   const ttKey = text(tt.client_key), ttSecret = secret(tt.client_secret_set);
   const ttPrivacy = h("select", { on: { change: () => dirty = true } }, [["SELF_ONLY", "Private (required until TikTok audits your app)"], ["PUBLIC_TO_EVERYONE", "Public"]].map(([v, n]) => h("option", { value: v, selected: (tt.privacy || "SELF_ONLY") === v }, n)));
-  const igToken = text("", S.accounts.instagram ? "saved - paste a new one to replace it" : "", "password");
-  const status = name => S.accounts[name] ? h("span", { className: "badge approved" }, "Connected") : h("span", { className: "badge" }, "Not connected");
-  const disconnect = name => S.accounts[name] ? h("button", { className: "ghost-bad", on: { click: () => api("POST", "/api/disconnect/" + name) } }, "Disconnect") : null;
+  const igToken = text("", "", "password");
   const saveYt = () => api("POST", "/api/settings", { youtube_upload: { client_id: ytId.value, client_secret: ytSecret.value, privacy: ytPrivacy.value } });
   const saveTt = () => api("POST", "/api/settings", { tiktok: { client_key: ttKey.value, client_secret: ttSecret.value, privacy: ttPrivacy.value } });
+  // A connected account shows just its status, its options and Disconnect; the setup fields
+  // only appear while it isn't connected.
+  ytPrivacy.addEventListener("change", () => S.accounts.youtube && api("POST", "/api/settings", { youtube_upload: { privacy: ytPrivacy.value } }));
+  ttPrivacy.addEventListener("change", () => S.accounts.tiktok && api("POST", "/api/settings", { tiktok: { privacy: ttPrivacy.value } }));
+  const panel = (name, title, connected, setup) => h("div", { className: "panel" },
+    h("div", { className: "row" }, h("h2", { style: "margin-right:auto" }, title), statusBadge(name)),
+    S.accounts[name] ? connected : setup);
   $("accounts").replaceChildren(
-    h("div", { className: "panel" },
-      h("div", { className: "row" }, h("h2", { style: "margin-right:auto" }, "YouTube Shorts"), status("youtube")),
-      h("p", { className: "muted" }, "One-time setup: in Google Cloud Console create a project, enable \"YouTube Data API v3\", then create an OAuth client of type \"Web application\", add this address under \"Authorized redirect URIs\", and paste the client's ID and secret here: ", h("code", {}, S.youtube_redirect)),
-      h("div", { className: "row" }, field("Client ID", ytId), field("Client secret", ytSecret), field("New videos are", ytPrivacy)),
-      h("div", { className: "row", style: "margin-top:12px" },
-        h("button", { on: { click: saveYt } }, "Save"),
-        h("button", { className: "primary", on: { click: async () => { if (await saveYt()) location.href = "/connect/youtube"; } } }, S.accounts.youtube ? "Reconnect YouTube" : "Connect YouTube"),
-        disconnect("youtube"))),
-    h("div", { className: "panel" },
-      h("div", { className: "row" }, h("h2", { style: "margin-right:auto" }, "TikTok"), status("tiktok")),
-      h("p", { className: "muted" }, "One-time setup: at developers.tiktok.com create an app, add \"Login Kit\" and \"Content Posting API\" (with Direct Post), and register this redirect address: ", h("code", {}, S.tiktok_redirect)),
-      h("div", { className: "row" }, field("Client key", ttKey), field("Client secret", ttSecret), field("New videos are", ttPrivacy)),
-      h("div", { className: "row", style: "margin-top:12px" },
-        h("button", { on: { click: saveTt } }, "Save"),
-        h("button", { className: "primary", on: { click: async () => { if (await saveTt()) location.href = "/connect/tiktok"; } } }, S.accounts.tiktok ? "Reconnect TikTok" : "Connect TikTok"),
-        disconnect("tiktok"))),
-    h("div", { className: "panel" },
-      h("div", { className: "row" }, h("h2", { style: "margin-right:auto" }, "Instagram Reels"), status("instagram")),
-      h("p", { className: "muted" }, "One-time setup: your Instagram must be a Business or Creator account. At developers.facebook.com create an app, add the \"Instagram\" product (API setup with Instagram login), add your account there and press \"Generate token\". Paste that token here."),
-      h("div", { className: "row" }, field("Access token", igToken)),
-      h("div", { className: "row", style: "margin-top:12px" },
-        h("button", { className: "primary", on: { click: () => api("POST", "/api/connect/instagram", { token: igToken.value }) } }, S.accounts.instagram ? "Reconnect Instagram" : "Connect Instagram"),
-        disconnect("instagram"))));
+    panel("youtube", "YouTube Shorts",
+      h("div", { className: "row", style: "margin-top:12px;align-items:flex-end" }, field("New videos are", ytPrivacy), disconnectButton("youtube", "YouTube")),
+      [h("p", { className: "muted" }, "One-time setup: in Google Cloud Console create a project, enable \"YouTube Data API v3\", then create an OAuth client of type \"Web application\", add this address under \"Authorized redirect URIs\", and paste the client's ID and secret here: ", h("code", {}, S.youtube_redirect)),
+       h("div", { className: "row" }, field("Client ID", ytId), field("Client secret", ytSecret), field("New videos are", ytPrivacy)),
+       h("div", { className: "row", style: "margin-top:12px" },
+         h("button", { className: "primary", on: { click: async () => { if (await saveYt()) location.href = "/connect/youtube"; } } }, "Connect YouTube"))]),
+    panel("tiktok", "TikTok",
+      h("div", { className: "row", style: "margin-top:12px;align-items:flex-end" }, field("New videos are", ttPrivacy), disconnectButton("tiktok", "TikTok")),
+      [h("p", { className: "muted" }, "One-time setup: at developers.tiktok.com create an app, add \"Login Kit\" and \"Content Posting API\" (with Direct Post), and register this redirect address: ", h("code", {}, S.tiktok_redirect)),
+       h("div", { className: "row" }, field("Client key", ttKey), field("Client secret", ttSecret), field("New videos are", ttPrivacy)),
+       h("div", { className: "row", style: "margin-top:12px" },
+         h("button", { className: "primary", on: { click: async () => { if (await saveTt()) location.href = "/connect/tiktok"; } } }, "Connect TikTok"))]),
+    panel("instagram", "Instagram Reels",
+      h("div", { className: "row", style: "margin-top:12px" }, h("span", { className: "muted", style: "margin-right:auto" }, "Clipz can post Reels to your account."), disconnectButton("instagram", "Instagram")),
+      [h("p", { className: "muted" }, "One-time setup: your Instagram must be a Business or Creator account. At developers.facebook.com create an app, add the \"Instagram\" product (API setup with Instagram login), add your account there and press \"Generate token\". Paste that token here."),
+       h("div", { className: "row" }, field("Access token", igToken)),
+       h("div", { className: "row", style: "margin-top:12px" },
+         h("button", { className: "primary", on: { click: () => api("POST", "/api/connect/instagram", { token: igToken.value }) } }, "Connect Instagram"))]));
 }
 
 function renderSettings() {
@@ -360,16 +364,27 @@ function renderSettings() {
     schedule_minutes: text(st.schedule_minutes, "", "number"),
     auto_approve: h("input", { type: "checkbox", checked: st.auto_approve, on: { change: () => dirty = true } }),
     layout: h("select", { on: { change: () => dirty = true } }, Object.keys(S.layouts).map(l => h("option", { value: l, selected: st.layout === l }, NAMES[l] || l))),
-    twId: text(st.twitch.client_id), twSecret: secret(st.twitch.client_secret_set),
+    twId: text(""), twSecret: text("", "", "password"),
   };
   const list = el => el.value.split(",").map(s => s.trim()).filter(Boolean);
   const save = () => api("POST", "/api/settings", {
     game: f.game.value, keywords: list(f.keywords), hashtags: list(f.hashtags),
     lookback_hours: f.lookback_hours.value, min_views: f.min_views.value, max_clips_per_run: f.max_clips_per_run.value,
     max_duration: f.max_duration.value, schedule_minutes: f.schedule_minutes.value, auto_approve: f.auto_approve.checked, layout: f.layout.value,
-    twitch: { client_id: f.twId.value, client_secret: f.twSecret.value },
   });
+  const twitchId = st.twitch.client_id || "";
+  const shortId = twitchId.length > 10 ? twitchId.slice(0, 4) + "…" + twitchId.slice(-4) : twitchId;
   $("settings").replaceChildren(
+    h("div", { className: "panel" },
+      h("div", { className: "row" }, h("h2", { style: "margin-right:auto" }, "Twitch"), statusBadge("twitch")),
+      S.accounts.twitch
+        ? h("div", { className: "row", style: "margin-top:12px" },
+            h("span", { className: "muted", style: "margin-right:auto" }, `Clipz can search Twitch (app ${shortId}).`),
+            disconnectButton("twitch", "Twitch"))
+        : [h("p", { className: "muted" }, "Needed to search Twitch. Register a free app at dev.twitch.tv/console/apps (Category: Other, Client Type: Confidential), then paste its Client ID and secret."),
+           h("div", { className: "row" }, field("Client ID", f.twId), field("Client secret", f.twSecret)),
+           h("div", { className: "row", style: "margin-top:12px" },
+             h("button", { className: "primary", on: { click: () => api("POST", "/api/connect/twitch", { client_id: f.twId.value, client_secret: f.twSecret.value }) } }, "Connect Twitch"))]),
     h("div", { className: "panel" },
       h("h2", {}, "What to look for"),
       h("div", { className: "row", style: "margin-top:10px" },
@@ -385,10 +400,6 @@ function renderSettings() {
         : "Works while this app is open on your computer."),
       S.cloud ? null : h("div", { className: "row" }, field("Search automatically every (minutes, 0 = off)", f.schedule_minutes)),
       h("label", { className: "check", style: "margin-top:12px" }, f.auto_approve, "Skip review: approve and post every clip automatically")),
-    h("div", { className: "panel" },
-      h("h2", {}, "Twitch access"),
-      h("p", { className: "muted" }, "Needed to search Twitch. Register a free app at dev.twitch.tv/console/apps and paste its ID and secret."),
-      h("div", { className: "row" }, field("Client ID", f.twId), field("Client secret", f.twSecret))),
     h("button", { className: "primary", on: { click: save } }, "Save settings"));
 }
 
