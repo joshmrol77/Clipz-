@@ -128,7 +128,9 @@ def discover(cfg: Config, creators: list[Creator]) -> list[Clip]:
     for c in creators:
         try:
             ch = channel(c.channel)
-            for d in _channel_clips(ch["id"], _time_range(cfg.lookback_hours)):
+            raw = _channel_clips(ch["id"], _time_range(cfg.lookback_hours))
+            print(f"  kick: {c.channel}: Kick sent {len(raw)} clips", flush=True)
+            for d in raw:
                 game = (d.get("category") or {}).get("name", "")
                 if cfg.game and not c.all_content and game and game.lower() != cfg.game.lower():
                     continue
@@ -174,6 +176,7 @@ def discover_games(cfg: Config, games: list[dict]) -> list[Clip]:
         if clips is None:
             errors.append(f"{label}: {last_error or 'no clips list'}")
             continue
+        print(f"  kick games: {label}: Kick sent {len(clips)} clips", flush=True)
         for d in clips:
             ch = d.get("channel") or {}
             clip = _clip(cfg, d, now, ch.get("slug", ""), "", label, {g["name"].lower(): label})

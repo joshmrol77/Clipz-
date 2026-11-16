@@ -122,19 +122,25 @@ def _own_uploads(cfg: Config, c: Creator, now) -> list[Clip]:
 
 def _short_videos(cfg: Config, query: str, now, must_mention: str = "") -> list[dict]:
     """Most-viewed short videos for a search, within the time window."""
-    out = []
-    for e in _search(query, videos_filter(cfg.lookback_hours), SEARCH_RESULTS):
-        duration = e.get("duration") or 0
+    out, results = [], _search(query, videos_filter(cfg.lookback_hours), SEARCH_RESULTS)
+    for e in results:
+        # YouTube's search page lists Shorts without a length (and sometimes without views):
+        # they're at most a minute, so don't throw them away for that.
+        is_short = "/shorts/" in (e.get("url") or "")
+        duration = e.get("duration") or (60 if is_short else 0)
         if not e.get("id") or not duration or duration > MAX_THIRD_PARTY_LENGTH:
             continue
+        e = {**e, "duration": duration}
         title = (e.get("title") or "").lower()
         if must_mention and must_mention.lower() not in title and must_mention.lower().replace(" ", "") not in title.replace(" ", ""):
             continue  # search results drift; keep ones that actually name the subject
         ts = e.get("timestamp")
         created = datetime.fromtimestamp(ts, timezone.utc).isoformat() if ts else now.isoformat()
-        if (e.get("view_count") or 0) < cfg.min_views or age_hours(created, now) > cfg.lookback_hours:
+        views = e.get("view_count")
+        if (views is not None and views < cfg.min_views) or age_hours(created, now) > cfg.lookback_hours:
             continue
         out.append({**e, "created": created})
+    print(f"  youtube search {query!r}: {len(results)} results, {len(out)} kept", flush=True)
     return out
 
 

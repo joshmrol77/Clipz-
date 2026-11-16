@@ -615,3 +615,15 @@ def test_feed_hides_non_english_clips_already_found(cloud_app):
     db.add(con, clip("en", language="en"))
     db.add(con, clip("pt", language="pt"))
     assert [x["id"] for x in client.get("/api/feed", **base).get_json()["clips"]] == ["twitch:en"]
+
+
+def test_youtube_shorts_without_length_or_views_are_kept(cfg, monkeypatch):
+    from clipz.sources import youtube
+    now = time.time()
+    monkeypatch.setattr(youtube, "_search", lambda q, sp, limit: [
+        {"id": "s1", "url": "https://www.youtube.com/shorts/s1", "title": "Fortnite insane clutch", "timestamp": now - 600},
+        {"id": "v1", "url": "https://www.youtube.com/watch?v=v1", "title": "Fortnite no length", "timestamp": now - 600},
+        {"id": "s2", "url": "https://www.youtube.com/shorts/s2", "title": "Fortnite few views", "view_count": 3}])
+    cfg.min_views, cfg.games = 50, [{"name": "Fortnite", "label": "Fortnite"}]
+    clips = youtube.discover_games(cfg, cfg.games)
+    assert [c.id for c in clips] == ["youtube:s1"] and clips[0].duration == 60
