@@ -50,7 +50,8 @@ class Clip:
     uploader: str = ""      # who posted it, when that isn't the streamer (another clipper)
     category: str = ""      # set for clips found through a followed game
     game: str = ""          # the game/category being played, when the platform says
-    approve: str = ""       # "1" = saved to publishing: approve as soon as it's edited
+    approve: str = ""       # "1" = approve as soon as it's edited
+    autopost: str = ""      # "1" = and post it to the connected accounts straight away
     seen: str = ""          # "1" once it has been shown in the feed
 
 
@@ -124,7 +125,7 @@ def credit_line(clip: Clip) -> str:
 def _clip(row) -> Clip:
     data = dict(row)
     for c in ("src_path", "out_path", "published_url", "error", "layout", "background",
-              "thumbnail", "preview", "uploader", "category", "game", "approve", "seen"):
+              "thumbnail", "preview", "uploader", "category", "game", "approve", "seen", "autopost"):
         data[c] = data.get(c) or ""
     return Clip(**{c: data[c] for c in COLUMNS})
 

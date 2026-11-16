@@ -22,7 +22,7 @@ from ..config import Config, Creator
 from ..db import Clip
 from ..rank import age_hours, best_window, velocity
 
-RECENT_VIDEOS = 5
+RECENT_VIDEOS = 4
 WINDOW = 45.0                 # seconds cut from a long video's most-replayed part
 MAX_THIRD_PARTY_LENGTH = 180  # longer uploads aren't clips
 SEARCH_RESULTS = 40
@@ -82,11 +82,20 @@ def _embed(video_id: str, start: float | None = None, end: float | None = None) 
 
 
 def _own_uploads(cfg: Config, c: Creator, now) -> list[Clip]:
-    out = []
-    with yt_dlp.YoutubeDL({**QUIET, "extract_flat": True, "playlistend": RECENT_VIDEOS}) as ydl:
-        listing = ydl.extract_info(_channel_url(c.channel) + "/videos", download=False)
-    for entry in listing.get("entries") or []:
+    """Their recent uploads and finished livestreams (the channel's Live tab)."""
+    out, entries = [], []
+    for tab in ("/videos", "/streams"):
+        try:
+            with yt_dlp.YoutubeDL({**QUIET, "extract_flat": True, "playlistend": RECENT_VIDEOS}) as ydl:
+                entries += ydl.extract_info(_channel_url(c.channel) + tab, download=False).get("entries") or []
+        except Exception:
+            continue  # not every channel has both tabs
+    for entry in entries:
         title = entry.get("title") or ""
+        if entry.get("timestamp") and age_hours(datetime.fromtimestamp(entry["timestamp"], timezone.utc).isoformat(), now) > cfg.lookback_hours + 24:
+            continue  # clearly too old: skip the slow full lookup
+        if entry.get("live_status") == "is_live":
+            continue  # still live: no replay graph yet
         if cfg.keywords and not c.all_content and not any(k.lower() in title.lower() for k in cfg.keywords):
             continue
         with yt_dlp.YoutubeDL(QUIET) as ydl:

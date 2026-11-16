@@ -26,4 +26,7 @@ def discover(cfg: Config, log=print) -> list[Clip]:
             continue
         log(f"  {label}: {len(clips)} candidate(s)")
         found += clips
+    for clip in found:   # e.g. a YouTube upload titled "Speed plays GTA 6" counts as GTA 6
+        if not clip.game:
+            clip.game = cfg.infer_game(clip.title)
     return found

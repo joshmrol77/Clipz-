@@ -36,6 +36,7 @@ SECRET_FIELDS = {"twitch": ["client_secret"], "youtube_upload": ["client_secret"
 STATIC = Path(__file__).parent / "static"
 CLOUD_BUDGET = 120      # seconds of work per cloud worker run, leaving room under the 300s limit
 WAKE_COOLDOWN = 30      # don't re-wake a stalled worker more often than this
+AUTO_FIND_EVERY = 600   # look for new clips when the app is open and the last search is older than this
 
 LOGIN_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
 <title>Clipz</title><link rel=manifest href=/static/manifest.webmanifest>
@@ -189,7 +190,12 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         c = cfg()
         con = c.connect()
         job = worker.busy(c)
-        if not job and worker.pending(c) and time.time() - db.kv_get(con, "last_wake", 0) > WAKE_COOLDOWN:
+        if (not job and (c.creators or c.games)
+                and time.time() - db.kv_get(con, "last_find", 0) > AUTO_FIND_EVERY):
+            worker.request_find(c)   # opening the app (or keeping it open) keeps the feed fresh
+            start_worker()
+            job = "Finding clips"
+        elif not job and worker.pending(c) and time.time() - db.kv_get(con, "last_wake", 0) > WAKE_COOLDOWN:
             start_worker()  # a hand-off between workers was lost: pick the work back up
             job = "Starting"
         clips = []
@@ -442,6 +448,56 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         start_worker()
         return jsonify(started=True)
 
+    def format_choice(c, body, clip):
+        """Optional layout/headline sent with Post or Save. Returns (fields, error)."""
+        fields = {}
+        if body.get("layout"):
+            if body["layout"] not in render.LAYOUTS:
+                return None, "unknown layout"
+            if body["layout"] == "split" and not pipeline.backgrounds(c):
+                return None, "The Clip + gameplay format needs a gameplay video - add one in the Publishing tab, or pick another format."
+            fields["layout"] = body["layout"]
+        if (body.get("title") or "").strip():
+            fields["title"] = body["title"].strip()[:200]
+        return fields, None
+
+    @app.post("/api/clips/<path:clip_id>/post")
+    def post_clip(clip_id):
+        """Post this clip: edit it in the chosen format if needed, then post to every connected account."""
+        body, c = request.get_json(), cfg()
+        con = c.connect()
+        clip = db.get(con, clip_id)
+        if not clip:
+            abort(404)
+        fields, error = format_choice(c, body, clip)
+        if error:
+            return jsonify(error=error), 400
+        reformat = bool(fields) and clip.status in ("rendered", "approved", "rejected")
+        if clip.status in ("discovered", "skipped", "failed") or reformat:
+            db.update(con, clip_id, status="queued", approve="1", autopost="1", **fields)
+        elif clip.status in ("rendered", "approved", "rejected"):
+            db.update(con, clip_id, status="approved", **fields)
+            worker.request_publish(c)
+        else:
+            return jsonify(error=f"clip is {clip.status}"), 400
+        start_worker()
+        return jsonify(ok=True, accounts=publish.connected(c))
+
+    @app.post("/api/clips/<path:clip_id>/keep")
+    def keep_clip(clip_id):
+        """Save for later: edit it in the chosen format and leave it in Publishing to post later."""
+        body, c = request.get_json(), cfg()
+        con = c.connect()
+        clip = db.get(con, clip_id)
+        if not clip or clip.status not in ("discovered", "skipped", "failed"):
+            return jsonify(error="That clip can't be saved now."), 400
+        fields, error = format_choice(c, body, clip)
+        if error:
+            return jsonify(error=error), 400
+        db.update(con, clip_id, status="queued", approve="", autopost="", **fields)
+        start_worker()
+        return jsonify(ok=True)
+
     @app.post("/api/clips/<path:clip_id>/layout")
     def set_layout(clip_id):
         """Change a clip's layout / gameplay video / headline and re-edit it."""
@@ -503,7 +559,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
     def set_status(clip_id, action):
         moves = {"approve": (("rendered", "rejected"), "approved"), "reject": (("rendered", "approved"), "rejected"),
                  "edit": (("discovered", "skipped", "failed"), "queued"), "skip": (("discovered",), "skipped"),
-                 "save": (("discovered", "skipped", "failed"), "queued")}   # save to publishing
+                 "save": (("discovered", "skipped", "failed"), "queued")}   # save for later
         if action not in moves:
             abort(404)
         con = cfg().connect()
@@ -513,7 +569,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         allowed, to = moves[action]
         if clip.status not in allowed:
             return jsonify(error=f"clip is already {clip.status}"), 400
-        db.update(con, clip_id, status=to, **({"approve": "1"} if action == "save" else {}))
+        db.update(con, clip_id, status=to)
         if to == "queued":
             start_worker()
         return jsonify(ok=True)

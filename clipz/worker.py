@@ -20,7 +20,9 @@ WANT_FIND, WANT_PUBLISH = "want:find", "want:publish"
 
 
 def request_find(cfg: Config) -> None:
-    db.kv_set(cfg.connect(), WANT_FIND, time.time())
+    con = cfg.connect()
+    db.kv_set(con, WANT_FIND, time.time())
+    db.kv_set(con, "last_find", time.time())
 
 
 def request_publish(cfg: Config) -> None:
@@ -73,7 +75,8 @@ def step(cfg: Config, con, log, label) -> bool:
     if queued:
         label("Editing clips")
         pipeline.process(cfg, con, queued, log)
-        if cfg.auto_approve and db.get(con, queued[0].id).status == "approved":
+        done = db.get(con, queued[0].id)
+        if done.status == "approved" and (cfg.auto_approve or done.autopost == "1"):
             request_publish(cfg)
         return True
 

@@ -339,9 +339,9 @@ def test_feed_filters_by_game_and_creator_and_save_hide_seen_work(cloud_app):
 
     send("post", "/api/clips/seen", {"ids": ["twitch:1"]})                       # seen ones move to the back
     assert get()["clips"][-1]["id"] == "twitch:1"
-    assert send("post", "/api/clips/twitch:2/save").status_code == 200 and woke  # save to publishing
+    assert send("post", "/api/clips/twitch:2/save").status_code == 200 and woke  # save for later
     saved = db.get(con, "twitch:2")
-    assert (saved.status, saved.approve) == ("queued", "1")
+    assert (saved.status, saved.approve) == ("queued", "")
     send("post", "/api/mute", {"kind": "creator", "value": "kick:speed", "label": "speed"})
     assert [x["id"] for x in get()["clips"]] == ["youtube:4", "twitch:1"]
     send("post", "/api/mute", {"kind": "game", "value": "Just Chatting"})
@@ -514,3 +514,59 @@ def test_kick_clips_use_current_endpoints(cfg, monkeypatch):
     # exact channel names still come up when Kick's search finds nothing
     monkeypatch.setattr(kick, "_get", lambda url, **p: {"channels": []} if "search" in url else fake_get(url, **p))
     assert kick.search_channels(cfg, "speed")[0]["login"] == "speed"
+
+
+# ---- Wednesday: open the app, see fresh clips, post in one go ----------------------------------
+
+def test_post_from_feed_edits_in_chosen_format_then_posts(cloud_app):
+    client, woke, base = cloud_app
+    c = config.load("config.toml")
+    con = c.connect()
+    db.add(con, clip("new"))
+    db.add(con, clip("edited", status="rendered", out_path="/x.mp4"))
+    send = lambda url, body=None: client.post(url, data=json.dumps(body or {}), content_type="application/json",
+                                              headers={"X-Clipz": "1"}, **base)
+    assert send("/api/clips/twitch:new/post", {"layout": "nope"}).status_code == 400
+    assert "gameplay video" in send("/api/clips/twitch:new/post", {"layout": "split"}).get_json()["error"]
+    assert send("/api/clips/twitch:new/post", {"layout": "full", "title": "SPEED LOSES IT"}).status_code == 200
+    new = db.get(con, "twitch:new")
+    assert (new.status, new.approve, new.autopost, new.layout, new.title) == ("queued", "1", "1", "full", "SPEED LOSES IT")
+    assert send("/api/clips/twitch:edited/post").status_code == 200                  # already edited: just post
+    assert db.get(con, "twitch:edited").status == "approved"
+    assert db.kv_get(con, worker.WANT_PUBLISH) is not None
+    assert send("/api/clips/twitch:edited/keep").status_code == 400                   # only new finds
+    db.add(con, clip("later"))
+    assert send("/api/clips/twitch:later/keep", {"layout": "framed"}).status_code == 200
+    later = db.get(con, "twitch:later")
+    assert (later.status, later.approve, later.autopost) == ("queued", "", "")
+
+
+def test_autopost_clip_is_posted_after_editing(cfg, monkeypatch):
+    con = cfg.connect()
+    db.add(con, clip(status="queued", approve="1", autopost="1"))
+    monkeypatch.setattr(pipeline, "process", lambda c, con, clips, log: [db.update(con, x.id, status="approved") for x in clips])
+    worker.step(cfg, con, print, lambda label: None)
+    assert db.kv_get(con, worker.WANT_PUBLISH) == {"tried": []}
+
+
+def test_opening_the_app_starts_a_search_when_it_has_been_a_while(cloud_app):
+    client, woke, base = cloud_app
+    c = config.load("config.toml")
+    client.get("/api/state", **base)
+    assert woke == []                                           # nothing followed yet: nothing to search
+    config.save_settings(c, {"creators": [{"platform": "twitch", "channel": "ishowspeed"}]})
+    state = client.get("/api/state", **base).get_json()
+    assert state["job"] == "Finding clips" and woke == [1]
+    assert db.kv_get(c.connect(), worker.WANT_FIND)
+    db.kv_delete(c.connect(), worker.WANT_FIND)
+    client.get("/api/state", **base)
+    assert woke == [1]                                          # searched recently: no new search
+
+
+def test_game_is_recognised_from_clip_titles(cfg):
+    cfg.games = [{"name": "Grand Theft Auto VI", "label": "GTA 6"}]
+    for title in ("IShowSpeed plays GTA 6 for the first time", "Speed in GTA VI is insane",
+                  "SPEED GTA6 RAGE", "grand theft auto 6 funny moments", "Grand Theft Auto VI heist"):
+        assert cfg.infer_game(title) == "GTA 6", title
+    for title in ("Speed plays GTA 5", "GTA V stunts", "a gta 60 second clip", "Speed meets Ronaldo"):
+        assert cfg.infer_game(title) == "", title

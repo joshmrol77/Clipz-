@@ -91,6 +91,34 @@ class Config:
         creator = self.creator_for(clip)
         return (creator.hashtags if creator and creator.hashtags else self.render.get("hashtags", []))
 
+    def game_aliases(self) -> list[tuple[str, str]]:
+        """(lowercase phrase to look for in titles, followed game's label), longest first."""
+        romans = {"ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7", "viii": "8", "ix": "9", "x": "10"}
+        out = []
+        for g in self.games:
+            label = g.get("label") or g["name"]
+            names = {label.lower(), g["name"].lower()}
+            for n in list(names):
+                words = n.split()
+                if words and words[-1] in romans:          # "grand theft auto vi" -> "... 6"
+                    names.add(" ".join(words[:-1] + [romans[words[-1]]]))
+            for n in list(names):
+                words = n.split()
+                if len(words) >= 3:                         # "grand theft auto 6" -> "gta 6"
+                    initials = "".join(w[0] for w in words[:-1])
+                    names.add(f"{initials} {words[-1]}")
+                    names.add(f"{initials}{words[-1]}")
+            out += [(n, label) for n in names if len(n) >= 3]
+        return sorted(out, key=lambda x: -len(x[0]))
+
+    def infer_game(self, title: str) -> str:
+        import re
+        t = " " + re.sub(r"[^a-z0-9]+", " ", title.lower()) + " "
+        for phrase, label in self.game_aliases():
+            if f" {re.sub(r'[^a-z0-9]+', ' ', phrase).strip()} " in t:
+                return label
+        return ""
+
     def category_of(self, clip) -> str:
         if clip.category:
             return clip.category
