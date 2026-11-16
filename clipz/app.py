@@ -36,7 +36,7 @@ SECRET_FIELDS = {"twitch": ["client_secret"], "youtube_upload": ["client_secret"
 STATIC = Path(__file__).parent / "static"
 CLOUD_BUDGET = 120      # seconds of work per cloud worker run, leaving room under the 300s limit
 WAKE_COOLDOWN = 30      # don't re-wake a stalled worker more often than this
-AUTO_FIND_EVERY = 600   # look for new clips when the app is open and the last search is older than this
+AUTO_FIND_EVERY = 300   # look for new clips when the app is open and the last search is older than this
 
 LOGIN_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
 <title>Clipz</title><link rel=manifest href=/static/manifest.webmanifest>

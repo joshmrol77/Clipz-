@@ -207,7 +207,7 @@ async function refresh() {
   if (editing) renderEditor();
   const jobEnded = lastJob && !S.job;
   lastJob = S.job;
-  if (tab === "feed") { if (!feed.loaded || (jobEnded && !feed.clips.length)) loadFeed(true); else if (jobEnded) feedNews(); updateFeedbar(); }
+  if (tab === "feed") { if (!feed.loaded) loadFeed(true); else if (jobEnded) topUpFeed(); updateFeedbar(); }
   else if (tab === "clips") renderClips();
   else if (!dirty) ({ streamers: renderStreamers, accounts: renderAccounts, settings: renderSettings })[tab]();
 }
@@ -271,10 +271,21 @@ function updateFeedbar() {
   bar.querySelector(".find").disabled = !!(S && S.job);
 }
 
-function feedNews() {
-  if (document.querySelector(".feedbar .news")) return;
-  const pill = h("button", { className: "pill set news", on: { click: () => { pill.remove(); loadFeed(true); } } }, "New clips ↻");
-  $("feedbar").querySelector(".logo").after(pill);
+// After each background search, add whatever is new to the end of the feed - no tapping needed.
+async function topUpFeed() {
+  if (feed.loading) return;
+  const q = new URLSearchParams({ game: feed.game, creator: feed.creator, offset: 0, limit: 50 });
+  const data = await (await fetch("/api/feed?" + q)).json().catch(() => null);
+  if (!data) return;
+  const fresh = (data.clips || []).filter(c => !feed.clips.some(x => x.id === c.id));
+  feed.total = Math.max(data.total || 0, feed.clips.length + fresh.length);
+  if (!fresh.length) return;
+  const box = $("feed");
+  box.querySelector(".reel.empty")?.remove();
+  feed.clips.push(...fresh);
+  for (const c of fresh) box.append(reel(c));
+  toast(`${fresh.length} new clip${fresh.length === 1 ? "" : "s"} added`);
+  if (!feed.active) { const first = box.querySelector(".reel:not(.empty)"); if (first) activate(first); }
 }
 
 async function loadFeed(reset) {
@@ -310,7 +321,8 @@ function emptyReel() {
   const filtered = feed.game || feed.creator;
   return h("div", { className: "reel empty" },
     h("div", { style: "font-size:40px" }, "✓"),
-    h("div", { style: "color:#fff;font-weight:700;font-size:18px" }, filtered ? "Nothing here for this filter" : "You're all caught up"),
+    h("div", { style: "color:#fff;font-weight:700;font-size:18px" }, S && S.job ? "Finding clips…" : filtered ? "Nothing here for this filter" : "You're all caught up"),
+    h("div", {}, S && S.job ? "New clips appear here by themselves - you can keep the app open." : ""),
     h("div", {}, !S.creators.length && !(S.games || []).length ? "Follow streamers or games on the Following tab, then tap Find clips."
       : filtered ? "Try another game or creator, or clear the filter." : "Tap Find clips to look for more."),
     filtered ? h("button", { on: { click: () => { feed.game = feed.creator = feed.creatorName = ""; loadFeed(true); } } }, "Clear filter")
