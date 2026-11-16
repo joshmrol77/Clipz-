@@ -66,15 +66,23 @@
   .filters button.on { border-color: var(--accent); color: var(--text); }
   code { background: var(--bg); padding: 1px 6px; border-radius: 6px; overflow-wrap: anywhere; }
   .hidden { display: none; }
-  .feed { display: flex; flex-direction: column; gap: 16px; max-width: 560px; margin: 0 auto; }
-  .find { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  .find .player { position: relative; aspect-ratio: 16/9; background: #000; }
-  .find .player img, .find .player iframe, .find .player video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; object-fit: cover; }
-  .find .player video { object-fit: contain; }
-  .find .play { position: absolute; inset: 0; display: grid; place-items: center; background: none; border: 0; border-radius: 0; padding: 0; }
-  .find .play span { width: 64px; height: 64px; border-radius: 50%; background: rgba(0,0,0,.6); display: grid; place-items: center; font-size: 26px; color: #fff; }
-  .find .player .length { position: absolute; right: 8px; bottom: 8px; background: rgba(0,0,0,.75); color: #fff; font-size: 12px; padding: 1px 6px; border-radius: 4px; }
-  .find .body { padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-width: 900px; margin: 0 auto; }
+  .tile { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+          cursor: pointer; display: flex; flex-direction: column; min-width: 0; }
+  .tile .thumb { position: relative; aspect-ratio: 3/4; background: #000; }
+  .tile .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .tile .x { position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; padding: 0; border-radius: 50%;
+             border: 0; background: rgba(0,0,0,.65); color: #fff; font-size: 14px; line-height: 26px; text-align: center; z-index: 2; }
+  .tile .length { position: absolute; left: 5px; bottom: 5px; background: rgba(0,0,0,.75); color: #fff; font-size: 11px; padding: 0 5px; border-radius: 4px; }
+  .tile .flag { position: absolute; left: 5px; top: 5px; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 99px; background: var(--good); color: #06240f; }
+  .tile .flag.wait { background: var(--warn); }
+  .tile .flag.bad { background: var(--bad); color: #fff; }
+  .tile .info { padding: 6px 7px 8px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .tile .t { font-size: 12px; font-weight: 600; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+  .tile .m { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #viewer .player { position: relative; aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; }
+  #viewer .player iframe, #viewer .player video, #viewer .player img { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  #viewer .player img { object-fit: cover; }
   .chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 14px; }
   .chips button { white-space: nowrap; border-radius: 99px; }
   .chips button.on { border-color: var(--accent); background: var(--accent); color: #fff; }
@@ -128,10 +136,7 @@
   <section id="accounts" class="hidden"></section>
   <section id="settings" class="hidden"></section>
   <dialog id="editor"></dialog>
-  <div class="panel">
-    <h2>Activity</h2>
-    <pre id="log">Nothing yet.</pre>
-  </div>
+  <dialog id="viewer"></dialog>
 </main>
 <script>
 const TABS = { browse: "Browse", clips: "Edited", streamers: "Streamers", accounts: "Accounts", settings: "Settings" };
@@ -169,9 +174,6 @@ async function refresh() {
   S = await r.json();
   $("job").textContent = S.job ? S.job + "…" : "";
   $("run").disabled = $("post").disabled = !!S.job;
-  const log = $("log"), atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
-  log.textContent = S.log.length ? S.log.map(([t, m]) => new Date(t * 1000).toLocaleTimeString() + "  " + m).join("\n") : "Nothing yet.";
-  if (atBottom) log.scrollTop = log.scrollHeight;
   renderTabs();
   if (editing) renderEditor();
   const jobEnded = lastJob && !S.job;
@@ -208,38 +210,53 @@ function playerFor(c) {
   return h("iframe", { src: url, allow: "autoplay; fullscreen; encrypted-media", allowFullscreen: true });
 }
 
-function findCard(c) {
-  const player = h("div", { className: "player" });
-  const still = () => player.replaceChildren(
-    c.thumbnail ? h("img", { src: c.thumbnail, alt: "", loading: "lazy" }) : null,
-    c.preview
-      ? h("button", { className: "play", title: "Play", on: { click: () => {
-          if (browse.playing && browse.playing !== still) browse.playing();   // stop the other one
-          browse.playing = still;
-          player.replaceChildren(playerFor(c));
-        } } }, h("span", {}, "▶"))
-      : h("a", { href: c.url, target: "_blank", rel: "noopener", className: "play", title: "Watch on " + c.platform }, h("span", {}, "↗")),
-    c.duration ? h("span", { className: "length" }, mmss(c.duration)) : null);
-  still();
-  const id = encodeURIComponent(c.id);
-  const act = async (action) => {
-    if (!(await api("POST", `/api/clips/${id}/${action}`))) return;
-    if (action === "skip") { browse.clips = browse.clips.filter(x => x.id !== c.id); browse.total--; }
-    else c.status = "queued";
-    renderBrowse();
-  };
-  const state = {
+async function browseAct(c, action) {
+  if (!(await api("POST", `/api/clips/${encodeURIComponent(c.id)}/${action}`))) return false;
+  if (action === "skip") { browse.clips = browse.clips.filter(x => x.id !== c.id); browse.total--; }
+  else c.status = "queued";
+  renderBrowse();
+  return true;
+}
+
+function tile(c) {
+  const flag = { queued: ["wait", "Editing…"], failed: ["bad", "Failed"], discovered: null }[c.status];
+  const done = !(c.status in { queued: 1, failed: 1, discovered: 1 });
+  return h("div", { className: "tile", on: { click: () => openViewer(c) } },
+    h("div", { className: "thumb" },
+      c.thumbnail ? h("img", { src: c.thumbnail, alt: "", loading: "lazy" }) : null,
+      flag ? h("span", { className: "flag " + flag[0] }, flag[1]) : done ? h("span", { className: "flag" }, "Edited") : null,
+      c.status === "discovered" ? h("button", { className: "x", title: "Remove", "aria-label": "Remove",
+        on: { click: e => { e.stopPropagation(); browseAct(c, "skip"); } } }, "✕") : null,
+      c.duration ? h("span", { className: "length" }, mmss(c.duration)) : null),
+    h("div", { className: "info" },
+      h("div", { className: "t" }, c.title || "(untitled)"),
+      h("div", { className: "m" }, c.streamer),
+      h("div", { className: "m" }, `${compact(c.views)} views · ${ago(c.created_at)}`)));
+}
+const compact = n => (n || 0) >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : (n || 0) >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, "") + "K" : String(n || 0);
+
+function openViewer(c) {
+  const d = $("viewer");
+  const close = () => { d.close(); d.replaceChildren(); };   // emptying it stops the video
+  const act = async action => { if (await browseAct(c, action)) close(); };
+  const actions = {
     discovered: [h("button", { className: "primary", on: { click: () => act("edit") } }, "Edit this clip"),
-                 h("button", { on: { click: () => act("skip") } }, "Skip")],
+                 h("button", { on: { click: () => act("skip") } }, "Remove")],
     queued: h("span", { className: "badge" }, "Being edited…"),
-    failed: [h("span", { className: "badge failed" }, "Failed"), h("button", { on: { click: () => act("edit") } }, "Try again")],
+    failed: [h("span", { className: "badge failed" }, "Failed"), h("button", { className: "primary", on: { click: () => act("edit") } }, "Try again")],
   }[c.status] || h("span", { className: "badge approved" }, "Edited - see the Edited tab");
-  return h("div", { className: "find" }, player,
-    h("div", { className: "body" },
-      h("div", { className: "title" }, c.title || "(untitled)"),
-      h("div", { className: "muted" }, [c.streamer, c.platform, `${(c.views || 0).toLocaleString()} views`, ago(c.created_at)].filter(Boolean).join(" · ")),
-      c.uploader ? h("div", { className: "muted" }, "Posted by " + c.uploader) : null,
-      h("div", { className: "row" }, h("span", { className: "badge" }, c.category), h("span", { style: "flex:1" }), state)));
+  d.replaceChildren(h("div", { style: "display:flex;flex-direction:column;gap:10px" },
+    h("div", { className: "player" }, c.preview ? playerFor(c)
+      : [c.thumbnail ? h("img", { src: c.thumbnail, alt: "" }) : null,
+         h("a", { href: c.url, target: "_blank", rel: "noopener", className: "play" }, "Watch on " + c.platform)]),
+    h("div", { className: "title" }, c.title || "(untitled)"),
+    h("div", { className: "muted" }, [c.streamer, c.platform, `${(c.views || 0).toLocaleString()} views`, ago(c.created_at)].filter(Boolean).join(" · ")),
+    c.uploader ? h("div", { className: "muted" }, "Posted by " + c.uploader) : null,
+    h("div", { className: "row" }, h("span", { className: "badge" }, c.category), h("span", { style: "flex:1" }), actions),
+    h("div", { className: "row" }, h("a", { href: c.url, target: "_blank", rel: "noopener", className: "muted" }, "Open original"),
+      h("span", { style: "flex:1" }), h("button", { on: { click: close } }, "Close"))));
+  d.onclose = () => d.replaceChildren();
+  d.showModal();
 }
 
 function renderBrowse() {
@@ -247,12 +264,15 @@ function renderBrowse() {
   const chips = h("div", { className: "chips" }, cats.map(cat =>
     h("button", { className: cat === browse.category ? "on" : "", on: { click: () => { browse.category = cat; loadBrowse(true); } } }, cat || "All")));
   const sentinel = h("div", { style: "height:1px" });
-  const feed = h("div", { className: "feed" }, browse.clips.map(findCard), sentinel);
+  const feed = h("div", {}, h("div", { className: "grid3" }, browse.clips.map(tile)), sentinel);
+  const last = (S.log || []).at(-1);
+  const status = !S.job && last && Date.now() / 1000 - last[0] < 900 ? last[1].trim() : "";   // e.g. "12 new clip(s) found"
   const empty = !S.creators.length ? "Add streamers on the Streamers tab, then press \"Find new clips\"."
     : S.job ? "Looking for clips…" : "Nothing found yet. Press \"Find new clips\" to look.";
   $("browse").replaceChildren(chips,
     h("div", { className: "row muted", style: "margin-bottom:10px" }, `${browse.total} clip${browse.total === 1 ? "" : "s"} found`,
       h("span", { style: "flex:1" }), h("button", { on: { click: () => loadBrowse(true) } }, "Refresh")),
+    status ? h("div", { className: "muted", style: "font-size:13px;margin:-4px 0 10px;overflow-wrap:anywhere" }, status) : null,
     browse.clips.length ? feed : h("p", { className: "muted" }, empty));
   if (browse.clips.length < browse.total) {
     new IntersectionObserver((entries, obs) => { if (entries[0].isIntersecting) { obs.disconnect(); loadBrowse(false); } })
