@@ -61,6 +61,10 @@ def run(cfg: Config, log, budget: float | None = None) -> str:
 
 def step(cfg: Config, con, log, label) -> bool:
     """Do the next piece of work. Returns False when there is nothing left."""
+    if not db.kv_get(con, "migrated:no_auto_edit"):
+        db.kv_set(con, "migrated:no_auto_edit", time.time())
+        if (n := pipeline.return_auto_edits(con)):
+            log(f"Put {n} automatically picked clip(s) back in the feed")
     if db.kv_get(con, WANT_FIND):
         db.kv_delete(con, WANT_FIND)
         label("Finding clips")
@@ -68,7 +72,6 @@ def step(cfg: Config, con, log, label) -> bool:
             pipeline.discover(cfg, con, log)
         except Exception as e:
             log(f"Finding clips FAILED: {e}")
-        pipeline.queue_top(cfg, con)
         return True
 
     queued = db.by_status(con, "queued", 1)

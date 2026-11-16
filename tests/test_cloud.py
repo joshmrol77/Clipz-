@@ -76,38 +76,48 @@ def cfg(tmp_path, monkeypatch):
     return config.load("config.toml")
 
 
-def test_worker_finds_queues_edits_and_posts_once_per_request(cfg, monkeypatch):
+def test_worker_finds_into_the_feed_and_posts_once_per_request(cfg, monkeypatch):
     con = cfg.connect()
     config.save_settings(cfg, {"creators": [{"platform": "twitch", "channel": "x"}], "max_clips_per_run": 2})
     cfg = config.load("config.toml")
     found = [clip(i, score=s) for i, s in (("a", 3), ("b", 2), ("c", 1))]
     monkeypatch.setattr(pipeline.sources, "discover", lambda c, log: found)
     edited, posted = [], []
-
-    def fake_process(c, con, clips, log):
-        for x in clips:
-            edited.append(x.id)
-            db.update(con, x.id, status="approved", out_path="/v.mp4")
-    monkeypatch.setattr(pipeline, "process", fake_process)
+    monkeypatch.setattr(pipeline, "process", lambda c, con, clips, log: edited.extend(x.id for x in clips))
     monkeypatch.setattr(worker.publish, "connected", lambda c: ["youtube"])
     monkeypatch.setattr(pipeline, "publish_clip", lambda c, con, x, t, log: posted.append(x.id))
 
     worker.request_find(cfg)
     assert worker.pending(cfg)
-    log = []
-    assert worker.run(cfg, log.append) == "done"
-    assert edited == ["twitch:a", "twitch:b"]                          # top 2 only
-    assert db.get(con, "twitch:c").status == "discovered"
+    assert worker.run(cfg, print) == "done"
+    assert edited == []                                                # nothing is edited unless you pick it
+    assert [c.id for c in db.by_status(con, "discovered")] == ["twitch:a", "twitch:b", "twitch:c"]
+    for cid in ("twitch:a", "twitch:b"):
+        db.update(con, cid, status="approved")
     worker.request_publish(cfg)
-    assert worker.run(cfg, log.append) == "done"
+    assert worker.run(cfg, print) == "done"
     assert posted == ["twitch:a", "twitch:b"]                          # publish_clip fake never succeeds...
     assert not worker.pending(cfg)                                     # ...but it still stops
+
+
+def test_clips_old_versions_auto_picked_go_back_to_the_feed(cfg, monkeypatch):
+    monkeypatch.setattr(pipeline, "process", lambda c, con, clips, log: None)
+    con = cfg.connect()
+    db.add(con, clip("auto", status="queued"))
+    db.add(con, clip("autofail", status="failed", error="Sign in to confirm you're not a bot"))
+    db.add(con, clip("chosen", status="queued", approve="1", autopost="1"))
+    db.add(con, clip("reedit", status="queued", layout="split", out_path="/old.mp4"))
+    worker.step(cfg, con, lambda m: None, lambda label: None)
+    statuses = {c.id: c.status for c in db.all_clips(con)}
+    assert statuses["twitch:auto"] == "discovered"
+    assert statuses["twitch:autofail"] == "discovered"
+    assert statuses["twitch:chosen"] != "discovered" and statuses["twitch:reedit"] != "discovered"
 
 
 def test_worker_stops_when_its_time_is_up_and_respects_the_lock(cfg, monkeypatch):
     con = cfg.connect()
     for i in "abc":
-        db.add(con, clip(i, status="queued"))
+        db.add(con, clip(i, status="queued", approve="1"))
     monkeypatch.setattr(pipeline, "process",
                         lambda c, con, clips, log: [db.update(con, x.id, status="rendered") for x in clips])
     assert worker.run(cfg, print, budget=-1) == "more"                 # one step, then hand off

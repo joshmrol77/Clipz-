@@ -207,7 +207,11 @@ async function refresh() {
   if (editing) renderEditor();
   const jobEnded = lastJob && !S.job;
   lastJob = S.job;
-  if (tab === "feed") { if (!feed.loaded) loadFeed(true); else if (jobEnded) topUpFeed(); updateFeedbar(); }
+  if (tab === "feed") {
+    if (!feed.loaded) loadFeed(true);
+    else if (jobEnded || Date.now() - (feed.toppedUp || 0) > 10000) { feed.toppedUp = Date.now(); topUpFeed(); }
+    updateFeedbar();
+  }
   else if (tab === "clips") renderClips();
   else if (!dirty) ({ streamers: renderStreamers, accounts: renderAccounts, settings: renderSettings })[tab]();
 }
@@ -321,8 +325,8 @@ function emptyReel() {
   const filtered = feed.game || feed.creator;
   return h("div", { className: "reel empty" },
     h("div", { style: "font-size:40px" }, "✓"),
-    h("div", { style: "color:#fff;font-weight:700;font-size:18px" }, S && S.job ? "Finding clips…" : filtered ? "Nothing here for this filter" : "You're all caught up"),
-    h("div", {}, S && S.job ? "New clips appear here by themselves - you can keep the app open." : ""),
+    h("div", { style: "color:#fff;font-weight:700;font-size:18px" }, filtered ? "Nothing here for this filter" : S && S.job ? "Finding clips…" : "You're all caught up"),
+    h("div", {}, S && S.job && !filtered ? "New clips appear here by themselves - keep the app open." : ""),
     h("div", {}, !S.creators.length && !(S.games || []).length ? "Follow streamers or games on the Following tab, then tap Find clips."
       : filtered ? "Try another game or creator, or clear the filter." : "Tap Find clips to look for more."),
     filtered ? h("button", { on: { click: () => { feed.game = feed.creator = feed.creatorName = ""; loadFeed(true); } } }, "Clear filter")
@@ -852,8 +856,8 @@ function renderSettings() {
         field("Game (Twitch category name; blank = any)", f.game), field("YouTube title must contain one of", f.keywords), field("Hashtags on posts", f.hashtags)),
       h("div", { className: "row", style: "margin-top:10px" },
         field("Clips from the", f.lookback_hours), field("Minimum views", f.min_views),
-        field("Auto-edit the best N clips per search (0 = pick them yourself in Browse)", f.max_clips_per_run), field("Max clip length (seconds)", f.max_duration)),
-      h("div", { className: "row", style: "margin-top:10px" }, field("Layout for new clips (change any clip later by clicking it)", f.layout))),
+        field("Max clip length (seconds)", f.max_duration)),
+      h("div", { className: "row", style: "margin-top:10px" }, field("Default format", f.layout))),
     h("div", { className: "panel" },
       h("h2", {}, "Autopilot"),
       h("p", { className: "muted" }, S.cloud

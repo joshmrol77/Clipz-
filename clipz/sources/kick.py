@@ -158,11 +158,15 @@ def discover_games(cfg: Config, games: list[dict]) -> list[Clip]:
         slug = g.get("kick_slug") or slugify(g["name"])
         label = g.get("label") or g["name"]
         clips, last_error = None, None
-        for url in CATEGORY_CLIP_URLS:
+        time_range = _time_range(cfg.lookback_hours)
+        attempts = [(url, params) for url in CATEGORY_CLIP_URLS for params in (
+            {"sort": "views", "time": time_range}, {"sort": "view", "time": time_range}, {"sort": "views"}, {})]
+        for url, params in attempts:
             try:
-                data = _get(url.format(slug=slug), sort="views", time=_time_range(cfg.lookback_hours))
+                data = _get(url.format(slug=slug), **params)
                 clips = (data.get("data") or {}).get("clips") if "data" in data else data.get("clips")
                 if clips is not None:
+                    print(f"  kick games: {label} clips from {url.format(slug=slug)} {params}")
                     break
             except Exception as e:
                 last_error = e

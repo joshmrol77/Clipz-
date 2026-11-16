@@ -21,15 +21,17 @@ def discover(cfg: Config, con, log=print) -> int:
     return new
 
 
-def queue_top(cfg: Config, con) -> list[str]:
-    """Auto-edit: mark the best clips found so far as next in line to be downloaded and edited.
-    max_clips_per_run = 0 means you pick every clip yourself in Browse."""
-    if cfg.max_clips_per_run <= 0:
-        return []
-    ids = [c.id for c in db.by_status(con, "discovered", cfg.max_clips_per_run)]
-    for clip_id in ids:
-        db.update(con, clip_id, status="queued")
-    return ids
+def return_auto_edits(con) -> int:
+    """Older versions edited the top finds automatically, which emptied the feed. Put any of
+    those that never got edited back into the feed (clips you chose have approve/autopost set
+    or were saved with a layout)."""
+    moved = 0
+    for status in ("queued", "failed"):
+        for clip in db.by_status(con, status):
+            if not clip.out_path and not clip.approve and not clip.autopost and not clip.layout:
+                db.update(con, clip.id, status="discovered", error="")
+                moved += 1
+    return moved
 
 
 def find_and_render(cfg: Config, con, log=print) -> None:
