@@ -121,17 +121,16 @@ class Config:
         return ""
 
     def wanted_language(self, clip) -> bool:
-        """With english_only on: keep clips the platform marks as English, and for platforms that
-        don't say, clips whose title isn't mostly in another alphabet."""
+        """With english_only on: Twitch clips must be marked English (every new one carries a
+        language; ones without are from before Clipz stored it). Kick and YouTube don't say, so
+        their titles are checked instead."""
         if not self.english_only:
             return True
         if clip.language:
             return clip.language.lower().startswith("en")
-        letters = [ch for ch in clip.title if ch.isalpha()]
-        if not letters:
-            return True
-        latin = sum(1 for ch in letters if ch.isascii())
-        return latin / len(letters) >= 0.7
+        if clip.platform == "twitch":
+            return False
+        return looks_english(clip.title)
 
     def category_of(self, clip) -> str:
         if clip.category:
@@ -146,6 +145,38 @@ class Config:
     @property
     def db_path(self):
         return self.database or self.data_dir / "clipz.sqlite"
+
+
+# Common short words that are a strong sign a title isn't English (Spanish, Portuguese, French,
+# German, Italian, Turkish). Words that are also English ("a", "no", "me", "on") are left out.
+_FOREIGN_WORDS = set("""
+el la los las del que qué por para con una uno pero muy esto este esta cuando como cómo porque hermano
+jaja jajaja jajajaja nao não você voce isso muito pra mas mais tá né eu ele ela mano kkk kkkk kkkkk
+le les est pas avec pour une je il elle c'est qu'il mdr vraiment
+der die das und nicht ist ich mit auf ein eine was wir
+che non sono della questo questa perché
+ve bir bu çok için ama
+""".split())
+_ENGLISH_WORDS = set("""
+the and is it you he she this that what when with for of to in my his her was are gets got just bro lol
+omg how why who his they them i'm it's can't don't
+""".split())
+_FOREIGN_LETTERS = set("ñãõçáéíóúàèêôâüöäßğşı¿¡")
+
+
+def looks_english(title: str) -> bool:
+    """A best guess from a short title. Titles with no tell-tale words (e.g. "SPEED LOSES IT")
+    count as English."""
+    import re
+    letters = [ch for ch in title if ch.isalpha()]
+    if letters and sum(1 for ch in letters if ch.isascii()) / len(letters) < 0.7:
+        return False                       # mostly another alphabet (Cyrillic, Arabic, Korean...)
+    words = re.findall(r"[a-zA-ZÀ-ɏ']+", title.lower())
+    unique = set(words)
+    foreign = sum(1 for w in unique if w in _FOREIGN_WORDS or re.fullmatch(r"(ja){2,}|k{3,}", w))
+    foreign += 2 if any(ch in _FOREIGN_LETTERS for ch in title.lower()) else 0
+    english = sum(1 for w in unique if w in _ENGLISH_WORDS)
+    return not (foreign >= 1 and foreign > english)
 
 
 def database_url() -> str:

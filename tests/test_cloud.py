@@ -30,7 +30,7 @@ def con(request, tmp_path):
 
 
 def clip(i="a", **kw):
-    fields = dict(id=f"twitch:{i}", platform="twitch", creator="x", credit="twitch.tv/x", title="t", url="u")
+    fields = dict(id=f"twitch:{i}", platform="twitch", creator="x", credit="twitch.tv/x", title="t", url="u", language="en")
     return Clip(**{**fields, **kw})
 
 
@@ -331,7 +331,7 @@ def test_feed_filters_by_game_and_creator_and_save_hide_seen_work(cloud_app):
         {"platform": "kick", "channel": "speed", "category": "IRL"}]})
     con = c.connect()
     add = lambda cid, plat, who, game, score, **kw: db.add(con, Clip(
-        id=cid, platform=plat, creator=who, credit="x", title=cid, url="u", score=score, game=game, **kw))
+        id=cid, platform=plat, creator=who, credit="x", title=cid, url="u", score=score, game=game, language="en", **kw))
     add("twitch:1", "twitch", "togi", "Just Chatting", 5)
     add("twitch:2", "twitch", "BigGuy", "GTA 6", 4, category="GTA 6")
     add("kick:3", "kick", "speed", "GTA 6", 3)
@@ -441,7 +441,7 @@ def test_follow_a_game_and_get_top_clips_from_everyone(cfg, monkeypatch):
     cfg = config.load("config.toml")
     now = datetime_now().strftime("%Y-%m-%dT%H:%M:%SZ")
     clip_row = lambda cid, who, views: {"id": cid, "title": f"{who} clip", "url": "u", "view_count": views,
-                                        "created_at": now, "duration": 25, "broadcaster_name": who, "game_id": "999"}
+                                        "created_at": now, "duration": 25, "broadcaster_name": who, "game_id": "999", "language": "en"}
     asked = []
 
     def fake_get(s, path, **p):
@@ -600,11 +600,16 @@ def test_feed_gets_direct_video_for_autoplay(cloud_app, monkeypatch):
 
 def test_english_only_keeps_english_clips(cfg):
     assert cfg.english_only
-    keep = [clip("a", language="en"), clip("b", language="en-gb"), clip("c", title="Speed loses it 😂"),
-            clip("d", title="")]
-    drop = [clip("e", language="es"), clip("f", title="Спид проиграл в GTA 6"), clip("g", title="스피드 GTA 6 레전드")]
-    assert all(cfg.wanted_language(c) for c in keep)
-    assert not any(cfg.wanted_language(c) for c in drop)
+    yt = lambda title: clip(title[:8], platform="youtube", title=title, language="")
+    keep = [clip("a", language="en"), clip("b", language="en-gb"),
+            yt("Speed loses it 😂"), yt("SPEED GTA 6 RAGE"), yt("he really did that"), yt("Jynxzi crashout"),
+            yt("No way he hit that shot"), yt("La La Land reaction gone wrong lol")]
+    drop = [clip("e", language="es"), clip("old", language=""),          # Twitch with no language = from before
+            yt("Спид проиграл в GTA 6"), yt("스피드 GTA 6 레전드"),
+            yt("el mejor clip de la semana"), yt("ele não acredita kkkk"), yt("jajaja que risa"),
+            yt("c'est pas possible"), yt("das ist nicht normal"), yt("increíble jugada")]
+    assert [c.title for c in keep if not cfg.wanted_language(c)] == []
+    assert [c.title or c.id for c in drop if cfg.wanted_language(c)] == []
     cfg.english_only = False
     assert all(cfg.wanted_language(c) for c in drop)
 
