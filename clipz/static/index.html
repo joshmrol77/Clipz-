@@ -87,6 +87,15 @@
   .reel .stage { position: relative; width: 100%; max-width: 900px; aspect-ratio: 16/9; background: #000; }
   .reel .stage > * { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; object-fit: contain; }
   .reel .stage img { object-fit: cover; }
+  /* vertical clips fill the screen like TikTok/Reels; caption and buttons sit on top */
+  .reel.tall { padding: 0; }
+  .reel.tall .stage { position: absolute; inset: 0; max-width: none; width: 100%; height: 100%; aspect-ratio: auto; }
+  .reel.tall .stage video, .reel.tall .stage img { object-fit: cover; }
+  .reel.tall .bg { display: none; }
+  .reel.tall::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 45%; pointer-events: none; z-index: 1;
+                      background: linear-gradient(transparent, rgba(0,0,0,.65)); }
+  .reel.tall .meta, .reel.tall .actions { z-index: 2; }
+  .reel.tall .stage > button.sound { bottom: auto; top: calc(env(safe-area-inset-top) + 62px); }
   .reel .stage > button.sound { inset: auto; left: 10px; bottom: 10px; width: auto; height: auto; z-index: 3; border-radius: 99px;
                  background: rgba(0,0,0,.6); color: #fff; border: 0; font-size: 13px; padding: 6px 12px; }
   .reel .meta { position: absolute; left: 14px; right: 74px; bottom: 16px; text-shadow: 0 1px 3px rgba(0,0,0,.9); }
@@ -275,6 +284,10 @@ function streamFor(c) {   // fetched once per clip, ahead of time for the next o
 
 function videoPlayer(c, src) {
   const v = h("video", { autoplay: true, muted: true, playsInline: true, loop: true, preload: "auto" });
+  v.addEventListener("loadedmetadata", () => {   // vertical video: switch this clip to full screen
+    c._tall = v.videoHeight > v.videoWidth;
+    v.closest(".reel")?.classList.toggle("tall", c._tall);
+  });
   v.setAttribute("muted", ""); v.setAttribute("playsinline", "");   // iPhone checks the attributes
   const start = () => {
     v.muted = !soundOn;
@@ -309,6 +322,7 @@ function embedPlayer(c) {
 
 async function mountPlayer(el) {
   const c = el._clip;
+  if (c._tall || /\/shorts\//.test(c.url || "")) el.classList.add("tall");   // known vertical: full screen straight away
   if (c.platform === "youtube" || !c.preview && c.platform !== "twitch") return el._stage.replaceChildren(embedPlayer(c));
   const src = c.platform === "kick" ? c.preview : await streamFor(c);
   if (feed.active !== el) return;                        // swiped away while we were fetching
