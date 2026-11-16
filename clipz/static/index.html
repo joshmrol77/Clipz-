@@ -275,43 +275,74 @@ function toast(text) {
 let hlsLoading = null;
 // The feed plays clips in its own <video> so they start by themselves: phones allow a muted
 // video to autoplay, but Twitch's embedded player insists on a tap. YouTube keeps its own player.
-let soundOn = (() => { try { return localStorage.getItem("clipz-sound") === "1"; } catch { return false; } })();
+// Sound is on unless you've turned it off. Phones only allow sound after a tap, so the first tap
+// anywhere in the feed switches it on; after that the shared player keeps playing with sound.
+let soundOn = (() => { try { return localStorage.getItem("clipz-sound") !== "0"; } catch { return true; } })();
 
 function streamFor(c) {   // fetched once per clip, ahead of time for the next one
   if (!c._stream) c._stream = fetch(`/api/clips/${encodeURIComponent(c.id)}/stream`).then(r => r.json()).then(d => d.url || "").catch(() => "");
   return c._stream;
 }
 
-function videoPlayer(c, src) {
-  const v = h("video", { autoplay: true, muted: true, playsInline: true, loop: true, preload: "auto" });
-  v.addEventListener("loadedmetadata", () => {   // vertical video: switch this clip to full screen
-    c._tall = v.videoHeight > v.videoWidth;
-    v.closest(".reel")?.classList.toggle("tall", c._tall);
-  });
-  v.setAttribute("muted", ""); v.setAttribute("playsinline", "");   // iPhone checks the attributes
-  const start = () => {
-    v.muted = !soundOn;
-    v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });   // sound refused: play muted
-  };
-  if (src.includes(".m3u8") && !v.canPlayType("application/vnd.apple.mpegurl")) {
-    hlsLoading = hlsLoading || new Promise((ok, fail) => document.head.append(h("script", {
-      src: "https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js", onload: ok, onerror: fail })));
-    hlsLoading.then(() => { const hls = new window.Hls(); hls.loadSource(src); hls.attachMedia(v); start(); }).catch(() => {});
-  } else { v.src = src; start(); }
-  const badge = h("button", { className: "sound" }, v.muted || !soundOn ? "🔇 Tap for sound" : "🔊");
-  const sync = () => { badge.textContent = v.muted ? "🔇 Tap for sound" : "🔊"; };
-  v.addEventListener("volumechange", sync);
+// ONE video element for the whole feed, moved from clip to clip. iPhones grant permission to play
+// (and to play with sound) per element, so a single element tapped once keeps it for every clip -
+// no more clips that refuse to start until you tap them.
+const player = { v: null, badge: null, hls: null, clip: null };
+
+function sharedVideo() {
+  if (player.v) return player.v;
+  const v = h("video", { playsInline: true, loop: true, preload: "auto" });
+  v.setAttribute("playsinline", ""); v.setAttribute("webkit-playsinline", "");
+  const badge = h("button", { className: "sound" });
+  const sync = () => { badge.textContent = v.muted ? "🔇 Tap for sound" : "🔊"; badge.classList.toggle("hidden", !v.muted && soundOn); };
   const toggle = e => {
     e.stopPropagation();
     v.muted = !v.muted; soundOn = !v.muted;
     try { localStorage.setItem("clipz-sound", soundOn ? "1" : "0"); } catch {}
-    if (v.paused) v.play().catch(() => {});
+    v.play().catch(() => {});
     sync();
   };
+  v.addEventListener("volumechange", sync);
   v.addEventListener("click", toggle);
   badge.addEventListener("click", toggle);
-  setTimeout(sync, 400);
-  return [v, badge];
+  v.addEventListener("loadedmetadata", () => {   // vertical video: this clip goes full screen
+    const c = player.clip;
+    if (!c) return;
+    c._tall = v.videoHeight > v.videoWidth;
+    v.closest(".reel")?.classList.toggle("tall", c._tall);
+  });
+  // First tap anywhere: that's the permission phones need, so turn the sound on.
+  const unlock = () => { if (soundOn && v.muted) { v.muted = false; v.play().catch(() => { v.muted = true; }); } };
+  document.addEventListener("touchend", unlock, { passive: true });
+  document.addEventListener("click", unlock);
+  player.v = v; player.badge = badge; player.sync = sync;
+  return v;
+}
+
+function playNow(v) {
+  v.muted = !soundOn;
+  const p = v.play();
+  if (p) p.catch(() => { v.muted = true; v.play().catch(() => {}); });   // sound not allowed yet: play muted
+  setTimeout(player.sync, 300);
+}
+
+function videoPlayer(c, src) {
+  const v = sharedVideo();
+  player.clip = c;
+  if (player.hls) { player.hls.destroy(); player.hls = null; }
+  v.pause();
+  if (src.includes(".m3u8") && !v.canPlayType("application/vnd.apple.mpegurl")) {
+    v.removeAttribute("src");
+    hlsLoading = hlsLoading || new Promise((ok, fail) => document.head.append(h("script", {
+      src: "https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js", onload: ok, onerror: fail })));
+    hlsLoading.then(() => {
+      if (player.clip !== c) return;
+      player.hls = new window.Hls(); player.hls.loadSource(src); player.hls.attachMedia(v); playNow(v);
+    }).catch(() => {});
+  } else {
+    if (v.getAttribute("src") !== src) v.src = src;
+  }
+  return [v, player.badge];
 }
 
 function embedPlayer(c) {
@@ -327,6 +358,7 @@ async function mountPlayer(el) {
   const src = c.platform === "kick" ? c.preview : await streamFor(c);
   if (feed.active !== el) return;                        // swiped away while we were fetching
   el._stage.replaceChildren(...(src ? videoPlayer(c, src) : [embedPlayer(c)]));
+  if (src && player.v && !player.hls) playNow(player.v);   // play once it's in place (moving a video pauses it)
 }
 
 function updateFeedbar() {
@@ -418,6 +450,7 @@ function activate(el) {
   if (feed.active === el) return;
   if (feed.active) {  // stop the previous one by putting its picture back
     const prev = feed.active;
+    if (player.v && prev._stage.contains(player.v)) player.v.pause();
     prev._stage.replaceChildren(prev._clip.thumbnail ? h("img", { src: prev._clip.thumbnail, alt: "" }) : "");
   }
   feed.active = el;
@@ -565,6 +598,7 @@ function show() {
   for (const id of Object.keys(TABS)) $(id).classList.toggle("hidden", id !== tab);
   document.body.classList.toggle("on-feed", tab === "feed");
   if (tab !== "feed" && feed.active) {  // leaving the feed: stop the video
+    player.v?.pause();
     feed.active._stage.replaceChildren(feed.active._clip.thumbnail ? h("img", { src: feed.active._clip.thumbnail, alt: "" }) : "");
     feed.active = null;
   } else if (tab === "feed" && feed.loaded) {
