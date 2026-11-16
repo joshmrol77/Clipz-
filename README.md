@@ -23,7 +23,7 @@ Your browser opens at <http://127.0.0.1:8777>. Everything is done from four tabs
 |---|---|
 | **Browse** | Every clip Clipz found, best first, filtered by category. Play them right there, then **Edit this clip** or **Skip**. |
 | **Edited** | Your picked clips as finished vertical videos: change the layout, then Approve or Reject. |
-| **Streamers** | Search for streamers on Twitch, Kick or YouTube as you type, put each in a category (e.g. "GTA 6", "IRL"), choose "only the game" or "all their clips", and optionally give them their own hashtags. |
+| **Streamers** | **Follow games** (e.g. GTA 6) to get their most-viewed clips from everyone streaming them on Twitch plus the most-viewed short YouTube videos about them. Search for streamers on Twitch, Kick or YouTube as you type, put each in a category (e.g. "GTA 6", "IRL"), choose "only the game" or "all their clips", and optionally give them their own hashtags. |
 | **Accounts** | Connect YouTube, TikTok and Instagram. |
 | **Settings** | Connect Twitch, choose the game, turn on autopilot or auto-editing. |
 

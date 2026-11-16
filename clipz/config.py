@@ -56,7 +56,7 @@ class Creator:
 class Config:
     game: str = "Grand Theft Auto VI"
     keywords: list[str] = field(default_factory=lambda: ["gta"])
-    lookback_hours: int = 24
+    lookback_hours: int = 168         # only consider clips from the last this-many hours
     min_views: int = 50
     max_clips_per_run: int = 0        # auto-edit this many of the best finds per search; 0 = pick in Browse
     max_duration: int = 60
@@ -64,6 +64,8 @@ class Config:
     schedule_minutes: int = 0          # app only: 0 = never run automatically
     data_dir: Path = Path("data")
     creators: list[Creator] = field(default_factory=list)
+    # Followed games: [{"name": Twitch category name, "twitch_id", "image", "label": what you call it}]
+    games: list[dict] = field(default_factory=list)
     twitch: dict = field(default_factory=dict)
     render: dict = field(default_factory=dict)
     youtube_upload: dict = field(default_factory=dict)
@@ -86,6 +88,12 @@ class Config:
     def hashtags_for(self, clip) -> list[str]:
         creator = self.creator_for(clip)
         return (creator.hashtags if creator and creator.hashtags else self.render.get("hashtags", []))
+
+    def category_of(self, clip) -> str:
+        if clip.category:
+            return clip.category
+        creator = self.creator_for(clip)
+        return creator.category if creator else "General"
 
     def is_gaming(self, clip) -> bool:
         creator = self.creator_for(clip)

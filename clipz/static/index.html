@@ -78,6 +78,9 @@
   .chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 14px; }
   .chips button { white-space: nowrap; border-radius: 99px; }
   .chips button.on { border-color: var(--accent); background: var(--accent); color: #fff; }
+  .game-art { width: 36px; height: 48px; border-radius: 4px; object-fit: cover; flex: none; background: var(--line); }
+  .suggest img.game-art { border-radius: 4px; width: 36px; height: 48px; }
+  button.badge { cursor: pointer; padding: 1px 8px; font: inherit; font-size: 12px; font-weight: 600; }
   .cat-head { margin: 18px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
   .suggest-wrap { position: relative; flex: 1 1 220px; min-width: 0; display: flex; }
   .suggest-wrap > input { flex: 1; min-width: 0; }
@@ -440,7 +443,7 @@ function renderStreamers() {
   platform.addEventListener("change", () => { results = []; close(); setHint(); });
   setHint();
   const game = S.settings.game;
-  const what = h("select", {}, game ? h("option", { value: "" }, `Only ${game} clips`) : null, h("option", { value: "all" }, "All their clips (any category)"));
+  const what = h("select", {}, h("option", { value: "all" }, "All their clips"), game ? h("option", { value: "" }, `Only their ${game} clips`) : null);
   const cats = S.categories || [];
   const catList = h("datalist", { id: "cat-list" }, cats.map(cat => h("option", { value: cat })));
   const category = h("input", { type: "text", value: (() => { try { return localStorage.getItem("clipz-cat"); } catch { return ""; } })() || cats[0] || "", list: "cat-list",
@@ -450,7 +453,7 @@ function renderStreamers() {
   const add = () => { try { localStorage.setItem("clipz-cat", category.value.trim()); } catch {}
     return api("POST", "/api/creators", { platform: platform.value, channel: channel.value, category: category.value, name: pickedName,
     all_content: what.value === "all", hashtags: tags.value.split(",").map(s => s.trim()).filter(Boolean) }); };
-  $("streamers").replaceChildren(h("div", { className: "panel" },
+  $("streamers").replaceChildren(gamesPanel(), h("div", { className: "panel" },
     h("h2", {}, "Streamers to clip"),
     h("p", { className: "muted" }, "Clipz only looks at channels on this list. Stick to creators who run a clipping program or have said it's OK - posting footage without permission gets channels struck."),
     h("div", { className: "row" }, platform, h("div", { className: "suggest-wrap" }, channel, menu)),
@@ -461,9 +464,53 @@ function renderStreamers() {
       h("h3", { className: "cat-head" }, cat),
       h("ul", { className: "list" }, S.creators.filter(c => c.category === cat).map(c =>
         h("li", {}, h("span", {}, c.name || c.channel, c.hashtags.length ? h("span", { className: "muted" }, "  #" + c.hashtags.join(" #")) : null),
-          h("span", { className: "badge" }, c.all_content || !game ? "All clips" : game + " only"), h("span", { className: "badge" }, c.platform),
+          game ? h("button", { className: "badge", title: "Tap to switch", on: { click: () => api("POST", "/api/creators/toggle", c) } },
+            c.all_content ? "All clips" : game + " only") : h("span", { className: "badge" }, "All clips"),
+          h("span", { className: "badge" }, c.platform),
           h("button", { className: "ghost-bad", on: { click: () => api("DELETE", "/api/creators", c) } }, "Remove"))))])
       : h("p", { className: "muted", style: "margin-top:14px" }, "No streamers yet.")));
+}
+
+// ---- Games & categories: follow a game, get the most-viewed clips from everyone playing it ----
+function gamesPanel() {
+  const input = h("input", { type: "text", autocomplete: "off", spellcheck: false, placeholder: "Search a game or category, e.g. Grand Theft Auto VI" });
+  const label = h("input", { type: "text", placeholder: "Call it (optional), e.g. GTA 6", on: { input: () => dirty = true } });
+  const menu = h("ul", { className: "suggest hidden", role: "listbox" });
+  const note = h("div", { className: "muted", style: "margin-top:6px;font-size:13px" },
+    S.accounts.twitch ? "" : "Connect Twitch in Settings to search games.");
+  let picked = null, timer = null, asked = "";
+  const close = () => menu.classList.add("hidden");
+  const lookup = async () => {
+    const q = input.value.trim();
+    picked = null;
+    if (q.length < 2 || !S.accounts.twitch) return close();
+    asked = q;
+    const data = await (await fetch("/api/search/games?q=" + encodeURIComponent(q))).json().catch(() => ({ results: [] }));
+    if (asked !== q || input.value.trim() !== q) return;
+    note.textContent = data.error || "";
+    menu.replaceChildren(...(data.results || []).map(g => h("li", { role: "option", on: { mousedown: e => {
+      e.preventDefault(); picked = g; input.value = g.name; close();
+    } } }, h("img", { className: "game-art", src: g.image, alt: "" }), h("div", { className: "who" }, h("div", {}, g.name)))));
+    menu.classList.toggle("hidden", !(data.results || []).length);
+  };
+  input.addEventListener("input", () => { dirty = true; clearTimeout(timer); timer = setTimeout(lookup, 250); });
+  input.addEventListener("blur", () => setTimeout(close, 150));
+  const add = () => {
+    if (!picked) return alert("Pick the game from the list that appears as you type.");
+    api("POST", "/api/games", { ...picked, label: label.value });
+  };
+  const games = S.games || [];
+  return h("div", { className: "panel" },
+    h("h2", {}, "Games & categories"),
+    h("p", { className: "muted" }, "Follow a game to get its most-viewed clips from everyone streaming it on Twitch, plus the most-viewed short YouTube videos about it."),
+    h("div", { className: "row" }, h("div", { className: "suggest-wrap" }, input, menu)),
+    note,
+    h("div", { className: "row", style: "margin-top:10px" }, label, h("button", { className: "primary", on: { click: add } }, "Follow")),
+    games.length ? h("ul", { className: "list" }, games.map(g => h("li", {},
+      g.image ? h("img", { className: "game-art", src: g.image.replace("{width}", "72").replace("{height}", "96"), alt: "" }) : null,
+      h("span", {}, g.label, g.label !== g.name ? h("span", { className: "muted" }, "  " + g.name) : null),
+      h("button", { className: "ghost-bad", on: { click: () => api("DELETE", "/api/games", g) } }, "Unfollow"))))
+    : null);
 }
 
 function field(label, input) { return h("label", { className: "field" }, label, input); }
@@ -517,7 +564,10 @@ function renderSettings() {
   const st = S.settings;
   const f = {
     game: text(st.game), keywords: text(st.keywords.join(", ")), hashtags: text(st.hashtags.join(", ")),
-    lookback_hours: text(st.lookback_hours, "", "number"), min_views: text(st.min_views, "", "number"),
+    lookback_hours: h("select", { on: { change: () => dirty = true } }, [[24, "Last 24 hours"], [72, "Last 3 days"], [168, "Last 7 days"], [720, "Last 30 days"]]
+      .concat([[24, 72, 168, 720].includes(st.lookback_hours) ? null : [st.lookback_hours, `Last ${st.lookback_hours} hours`]]).filter(Boolean)
+      .map(([v, n]) => h("option", { value: v, selected: st.lookback_hours === v }, n))),
+    min_views: text(st.min_views, "", "number"),
     max_clips_per_run: text(st.max_clips_per_run, "", "number"), max_duration: text(st.max_duration, "", "number"),
     schedule_minutes: text(st.schedule_minutes, "", "number"),
     auto_approve: h("input", { type: "checkbox", checked: st.auto_approve, on: { change: () => dirty = true } }),
@@ -548,7 +598,7 @@ function renderSettings() {
       h("div", { className: "row", style: "margin-top:10px" },
         field("Game (Twitch category name; blank = any)", f.game), field("YouTube title must contain one of", f.keywords), field("Hashtags on posts", f.hashtags)),
       h("div", { className: "row", style: "margin-top:10px" },
-        field("Only clips newer than (hours)", f.lookback_hours), field("Minimum views", f.min_views),
+        field("Clips from the", f.lookback_hours), field("Minimum views", f.min_views),
         field("Auto-edit the best N clips per search (0 = pick them yourself in Browse)", f.max_clips_per_run), field("Max clip length (seconds)", f.max_duration)),
       h("div", { className: "row", style: "margin-top:10px" }, field("Layout for new clips (change any clip later by clicking it)", f.layout))),
     h("div", { className: "panel" },

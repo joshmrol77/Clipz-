@@ -210,7 +210,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             settings[section] = values
         return jsonify(
             creators=[asdict(x) for x in c.creators], clips=clips,
-            categories=sorted({x.category for x in c.creators}),
+            categories=sorted({x.category for x in c.creators} | {g.get("label") or g["name"] for g in c.games}),
+            games=c.games,
             waiting=len(db.by_status(con, "discovered")),
             settings=settings,
             accounts={**{n: m.connected(c) for n, m in publish.PLATFORMS.items()},
@@ -249,6 +250,47 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         except Exception as e:
             return jsonify(results=[], error=f"Couldn't search {platform.title()} right now - type the exact channel name. ({str(e)[:120]})")
 
+    @app.get("/api/search/games")
+    def search_games():
+        c = cfg()
+        if not (c.twitch.get("client_id") and c.twitch.get("client_secret")):
+            return jsonify(results=[], error="Connect Twitch in Settings to search games.")
+        try:
+            return jsonify(results=twitch_source.search_categories(c, request.args.get("q", "")))
+        except Exception as e:
+            return jsonify(results=[], error=f"Couldn't search games right now. ({str(e)[:120]})")
+
+    @app.post("/api/games")
+    def add_game():
+        body, c = request.get_json(), cfg()
+        name = (body.get("name") or "").strip()
+        if not name:
+            return jsonify(error="Pick a game from the list."), 400
+        if any(g["name"].lower() == name.lower() for g in c.games):
+            return jsonify(error="You're already following that game."), 400
+        game = {"name": name, "twitch_id": str(body.get("id") or ""), "image": body.get("image") or "",
+                "label": (body.get("label") or "").strip() or name}
+        config.save_settings(c, {"games": [*c.games, game]})
+        say(f"Following {game['label']}. Press Find new clips to get its top clips.")
+        return jsonify(ok=True)
+
+    @app.delete("/api/games")
+    def remove_game():
+        name, c = request.get_json().get("name", ""), cfg()
+        config.save_settings(c, {"games": [g for g in c.games if g["name"] != name]})
+        return jsonify(ok=True)
+
+    @app.post("/api/creators/toggle")
+    def toggle_creator():
+        """Switch a streamer between all their clips and the game-only filter."""
+        body, c = request.get_json(), cfg()
+        creators = [asdict(x) for x in c.creators]
+        for x in creators:
+            if x["platform"] == body.get("platform") and x["channel"] == body.get("channel"):
+                x["all_content"] = not x["all_content"]
+        config.save_settings(c, {"creators": creators})
+        return jsonify(ok=True)
+
     @app.get("/api/browse")
     def browse():
         """Everything found, best first, for the Browse screen. ?category= narrows it down."""
@@ -262,7 +304,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             if clip.status not in show:
                 continue
             creator = c.creator_for(clip)
-            category = creator.category if creator else "General"
+            category = c.category_of(clip)
             if want and category != want:
                 continue
             items.append({**asdict(clip), "category": category,

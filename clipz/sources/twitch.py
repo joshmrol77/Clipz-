@@ -65,20 +65,44 @@ def _get(s: requests.Session, path: str, **params) -> list[dict]:
     return r.json()["data"]
 
 
+def search_categories(cfg: Config, query: str, limit: int = 8) -> list[dict]:
+    """Twitch games/categories matching what's been typed so far."""
+    query = query.strip()
+    if len(query) < 2:
+        return []
+    return [{"id": d["id"], "name": d["name"], "image": d.get("box_art_url", "")}
+            for d in _get(_session(cfg), "search/categories", query=query, first=limit)]
+
+
+def _window(cfg: Config) -> tuple[datetime, str, str]:
+    now = datetime.now(timezone.utc)
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    return now, (now - timedelta(hours=cfg.lookback_hours)).strftime(fmt), now.strftime(fmt)
+
+
+def _clip(d: dict, creator: str, credit: str, now, category: str = "") -> Clip:
+    return Clip(
+        id=f"twitch:{d['id']}", platform="twitch", creator=creator, credit=credit,
+        title=d["title"], url=d["url"], views=d["view_count"], created_at=d["created_at"],
+        duration=d["duration"], score=velocity(d["view_count"], d["created_at"], now),
+        thumbnail=d.get("thumbnail_url", ""), preview=f"https://clips.twitch.tv/embed?clip={d['id']}",
+        uploader=d.get("creator_name", ""), category=category,
+    )
+
+
 def discover(cfg: Config, creators: list[Creator]) -> list[Clip]:
     s = _session(cfg)
     game_id = None
     if cfg.game and not all(c.all_content for c in creators):
         games = _get(s, "games", name=cfg.game)
-        if not games:
-            raise RuntimeError(f"Twitch has no category named {cfg.game!r}")
-        game_id = games[0]["id"]
+        if games:
+            game_id = games[0]["id"]
+        else:
+            print(f"  twitch: no category named {cfg.game!r} - not filtering by game")
 
     users = _get(s, "users", login=[c.channel.lower() for c in creators])
     ids = {u["login"]: u["id"] for u in users}
-    now = datetime.now(timezone.utc)
-    started = (now - timedelta(hours=cfg.lookback_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
+    now, started, ended = _window(cfg)
     out = []
     for c in creators:
         uid = ids.get(c.channel.lower())
@@ -86,18 +110,24 @@ def discover(cfg: Config, creators: list[Creator]) -> list[Clip]:
             print(f"  twitch: channel {c.channel!r} not found, skipping")
             continue
         # Helix returns clips sorted by view count, so the first page is the top 100.
-        for d in _get(s, "clips", broadcaster_id=uid, started_at=started,
-                      ended_at=now.strftime("%Y-%m-%dT%H:%M:%SZ"), first=100):
+        for d in _get(s, "clips", broadcaster_id=uid, started_at=started, ended_at=ended, first=100):
             if game_id and not c.all_content and d["game_id"] != game_id:
                 continue
-            if d["view_count"] < cfg.min_views:
-                continue
-            out.append(Clip(
-                id=f"twitch:{d['id']}", platform="twitch", creator=c.channel, credit=c.credit,
-                title=d["title"], url=d["url"], views=d["view_count"], created_at=d["created_at"],
-                duration=d["duration"], score=velocity(d["view_count"], d["created_at"], now),
-                thumbnail=d.get("thumbnail_url", ""),
-                preview=f"https://clips.twitch.tv/embed?clip={d['id']}",
-                uploader=d.get("creator_name", ""),
-            ))
+            if d["view_count"] >= cfg.min_views:
+                out.append(_clip(d, c.channel, c.credit, now))
+    return out
+
+
+def discover_games(cfg: Config, games: list[dict]) -> list[Clip]:
+    """The most-viewed clips from everyone streaming each followed game."""
+    s = _session(cfg)
+    now, started, ended = _window(cfg)
+    out = []
+    for g in games:
+        if not g.get("twitch_id"):
+            continue
+        for d in _get(s, "clips", game_id=g["twitch_id"], started_at=started, ended_at=ended, first=100):
+            if d["view_count"] >= cfg.min_views:
+                name = d.get("broadcaster_name", "")
+                out.append(_clip(d, name, f"twitch.tv/{name.lower()}", now, g.get("label") or g["name"]))
     return out

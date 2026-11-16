@@ -48,6 +48,7 @@ class Clip:
     thumbnail: str = ""     # picture shown in Browse
     preview: str = ""       # what Browse plays: an embeddable page, or a video file URL
     uploader: str = ""      # who posted it, when that isn't the streamer (another clipper)
+    category: str = ""      # set for clips found through a followed game
 
 
 COLUMNS = list(Clip.__dataclass_fields__)
@@ -120,7 +121,7 @@ def credit_line(clip: Clip) -> str:
 def _clip(row) -> Clip:
     data = dict(row)
     for c in ("src_path", "out_path", "published_url", "error", "layout", "background",
-              "thumbnail", "preview", "uploader"):
+              "thumbnail", "preview", "uploader", "category"):
         data[c] = data.get(c) or ""
     return Clip(**{c: data[c] for c in COLUMNS})
 

@@ -388,3 +388,62 @@ def test_old_finds_are_pruned(con):
 def datetime_now():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc)
+
+
+# ---- Following games ----------------------------------------------------------------------------
+
+def test_follow_a_game_and_get_top_clips_from_everyone(cfg, monkeypatch):
+    from clipz import sources
+    from clipz.sources import twitch, youtube
+    config.save_settings(cfg, {"twitch": {"client_id": "cid", "client_secret": "s"},
+                               "creators": [{"platform": "twitch", "channel": "togi", "category": "IRL"}],
+                               "games": [{"name": "Grand Theft Auto VI", "twitch_id": "999", "label": "GTA 6"}]})
+    cfg = config.load("config.toml")
+    now = datetime_now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    clip_row = lambda cid, who, views: {"id": cid, "title": f"{who} clip", "url": "u", "view_count": views,
+                                        "created_at": now, "duration": 25, "broadcaster_name": who, "game_id": "999"}
+    asked = []
+
+    def fake_get(s, path, **p):
+        asked.append((path, p.get("game_id"), p.get("broadcaster_id")))
+        if path == "users":
+            return [{"login": "togi", "id": "1"}]
+        if path == "games":
+            return [{"id": "999"}]
+        if p.get("game_id"):
+            return [clip_row("shared", "Togi", 5000), clip_row("g1", "BigStreamer", 90000), clip_row("tiny", "Nobody", 3)]
+        return [clip_row("shared", "Togi", 5000)]
+    monkeypatch.setattr(twitch, "_session", lambda c: None)
+    monkeypatch.setattr(twitch, "_get", fake_get)
+    monkeypatch.setattr(youtube, "_search", lambda q, sp, limit: [])
+    found = sources.discover(cfg, log=lambda m: None)
+    by_id = {c.id: c for c in found}
+    assert set(by_id) == {"twitch:shared", "twitch:g1"}                    # under min views dropped
+    assert by_id["twitch:g1"].category == "GTA 6" and by_id["twitch:g1"].credit == "twitch.tv/bigstreamer"
+    con = cfg.connect()
+    for c in found:
+        db.add(con, c)
+    assert cfg.category_of(db.get(con, "twitch:shared")) == "IRL"         # streamer's category wins
+
+
+def test_youtube_filter_is_most_viewed_within_the_window():
+    from clipz.sources import youtube
+    assert youtube.videos_filter(24) == "CAMSBAgCEAE%3D"      # most viewed, today, videos
+    assert youtube.videos_filter(168) == "CAMSBAgDEAE%3D"     # ...this week
+    assert youtube.videos_filter(720) == "CAMSBAgEEAE%3D"     # ...this month
+
+
+def test_game_follow_endpoints_and_streamer_filter_toggle(cloud_app, monkeypatch):
+    client, _, base = cloud_app
+    send = lambda method, url, body: getattr(client, method)(url, data=json.dumps(body), content_type="application/json",
+                                                            headers={"X-Clipz": "1"}, **base)
+    assert send("post", "/api/games", {"name": ""}).status_code == 400
+    assert send("post", "/api/games", {"id": "999", "name": "Grand Theft Auto VI", "label": "GTA 6"}).status_code == 200
+    assert send("post", "/api/games", {"id": "999", "name": "grand theft auto vi"}).status_code == 400   # already following
+    state = client.get("/api/state", **base).get_json()
+    assert state["games"][0]["label"] == "GTA 6" and "GTA 6" in state["categories"]
+    send("delete", "/api/games", {"name": "Grand Theft Auto VI"})
+    assert client.get("/api/state", **base).get_json()["games"] == []
+    send("post", "/api/creators", {"platform": "twitch", "channel": "speed", "all_content": True})
+    send("post", "/api/creators/toggle", {"platform": "twitch", "channel": "speed"})
+    assert client.get("/api/state", **base).get_json()["creators"][0]["all_content"] is False

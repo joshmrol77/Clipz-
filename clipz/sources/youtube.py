@@ -13,6 +13,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from urllib.parse import quote_plus
 
+import base64
+from urllib.parse import quote
+
 import yt_dlp
 
 from ..config import Config, Creator
@@ -22,10 +25,16 @@ from ..rank import age_hours, best_window, velocity
 RECENT_VIDEOS = 5
 WINDOW = 45.0                 # seconds cut from a long video's most-replayed part
 MAX_THIRD_PARTY_LENGTH = 180  # longer uploads aren't clips
-SEARCH_RESULTS = 20
-# YouTube search filters ("sp"): channels only; and videos uploaded today, newest first.
-CHANNELS = "EgIQAg%3D%3D"
-TODAYS_VIDEOS_NEWEST = "CAISBAgCEAE%3D"
+SEARCH_RESULTS = 40
+CHANNELS = "EgIQAg%3D%3D"     # YouTube search filter ("sp"): channels only
+
+
+def videos_filter(lookback_hours: int) -> str:
+    """The "sp" search filter for: videos only, uploaded within the window, most viewed first.
+    It's a tiny protobuf: sort (3 = view count), then upload date (2 today, 3 this week,
+    4 this month, 5 this year) and type (1 = video)."""
+    window = 2 if lookback_hours <= 24 else 3 if lookback_hours <= 168 else 4 if lookback_hours <= 744 else 5
+    return quote(base64.b64encode(bytes([0x08, 3, 0x12, 0x04, 0x08, window, 0x10, 0x01])).decode(), safe="")
 QUIET = {"quiet": True, "no_warnings": True, "skip_download": True}
 
 
@@ -102,35 +111,63 @@ def _own_uploads(cfg: Config, c: Creator, now) -> list[Clip]:
     return out
 
 
+def _short_videos(cfg: Config, query: str, now, must_mention: str = "") -> list[dict]:
+    """Most-viewed short videos for a search, within the time window."""
+    out = []
+    for e in _search(query, videos_filter(cfg.lookback_hours), SEARCH_RESULTS):
+        duration = e.get("duration") or 0
+        if not e.get("id") or not duration or duration > MAX_THIRD_PARTY_LENGTH:
+            continue
+        title = (e.get("title") or "").lower()
+        if must_mention and must_mention.lower() not in title and must_mention.lower().replace(" ", "") not in title.replace(" ", ""):
+            continue  # search results drift; keep ones that actually name the subject
+        ts = e.get("timestamp")
+        created = datetime.fromtimestamp(ts, timezone.utc).isoformat() if ts else now.isoformat()
+        if (e.get("view_count") or 0) < cfg.min_views or age_hours(created, now) > cfg.lookback_hours:
+            continue
+        out.append({**e, "created": created})
+    return out
+
+
+def _as_clip(cfg: Config, e: dict, creator: str, credit: str, now, uploader: str, category: str = "") -> Clip:
+    duration, length = e["duration"], min(e["duration"], cfg.max_duration)
+    cut = duration > cfg.max_duration
+    views = e.get("view_count") or 0
+    return Clip(
+        id=f"youtube:{e['id']}", platform="youtube", creator=creator, credit=credit,
+        title=e.get("title") or "", url=e.get("url") or f"https://www.youtube.com/watch?v={e['id']}",
+        views=views, created_at=e["created"], duration=length,
+        start=0.0 if cut else None, end=float(length) if cut else None,
+        score=velocity(views, e["created"], now), thumbnail=_thumb(e), preview=_embed(e["id"]),
+        uploader=uploader, category=category,
+    )
+
+
 def _others_uploads(cfg: Config, c: Creator, now) -> list[Clip]:
-    """Today's short videos about this streamer, from any channel."""
+    """The most-viewed short videos about this streamer, from any channel."""
     name = c.name or c.channel.lstrip("@").rsplit("/", 1)[-1]
     query = name if c.all_content or not cfg.game else f"{name} {cfg.game}"
     own_ids = {c.channel.lower().lstrip("@"), name.lower()}
     out = []
-    for e in _search(query, TODAYS_VIDEOS_NEWEST, SEARCH_RESULTS):
-        duration = e.get("duration") or 0
-        if not e.get("id") or not duration or duration > MAX_THIRD_PARTY_LENGTH:
-            continue
-        title = e.get("title") or ""
-        if name.lower() not in title.lower() and name.lower().replace(" ", "") not in title.lower().replace(" ", ""):
-            continue  # search results drift; keep ones that actually name the streamer
-        ts = e.get("timestamp")
-        created = datetime.fromtimestamp(ts, timezone.utc).isoformat() if ts else now.isoformat()
-        views = e.get("view_count") or 0
-        if views < cfg.min_views or age_hours(created, now) > cfg.lookback_hours:
-            continue
+    for e in _short_videos(cfg, query, now, must_mention=name):
         uploader = e.get("channel") or e.get("uploader") or ""
         handle = (e.get("uploader_id") or "").lstrip("@").lower()
-        length = min(duration, cfg.max_duration)
-        out.append(Clip(
-            id=f"youtube:{e['id']}", platform="youtube", creator=c.channel, credit=c.credit,
-            title=title, url=e.get("url") or f"https://www.youtube.com/watch?v={e['id']}",
-            views=views, created_at=created, duration=length,
-            start=0.0 if duration > cfg.max_duration else None, end=float(length) if duration > cfg.max_duration else None,
-            score=velocity(views, created, now), thumbnail=_thumb(e), preview=_embed(e["id"]),
-            uploader="" if handle in own_ids or uploader.lower() in own_ids else uploader,
-        ))
+        theirs = handle in own_ids or uploader.lower() in own_ids
+        out.append(_as_clip(cfg, e, c.channel, c.credit, now, "" if theirs else uploader))
+    return out
+
+
+def discover_games(cfg: Config, games: list[dict]) -> list[Clip]:
+    """The most-viewed short videos about each followed game, from any channel."""
+    now = datetime.now(timezone.utc)
+    out = []
+    for g in games:
+        label = g.get("label") or g["name"]
+        for e in _short_videos(cfg, label, now):
+            uploader = e.get("channel") or e.get("uploader") or ""
+            handle = e.get("uploader_id") or ""
+            credit = f"youtube.com/{handle}" if handle.startswith("@") else (e.get("channel_url") or "YouTube")
+            out.append(_as_clip(cfg, e, uploader, credit, now, "", label))
     return out
 
 
