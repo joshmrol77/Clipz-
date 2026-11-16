@@ -19,7 +19,7 @@ PLATFORMS = ("twitch", "kick", "youtube")
 SECTIONS = ("twitch", "render", "youtube_upload", "tiktok")
 SCALARS = {
     "game": str, "lookback_hours": int, "min_views": int, "max_clips_per_run": int,
-    "max_duration": int, "auto_approve": bool, "schedule_minutes": int,
+    "max_duration": int, "auto_approve": bool, "schedule_minutes": int, "english_only": bool,
 }
 
 
@@ -61,6 +61,7 @@ class Config:
     max_clips_per_run: int = 0        # auto-edit this many of the best finds per search; 0 = pick in Browse
     max_duration: int = 60
     auto_approve: bool = False
+    english_only: bool = True          # only show clips in English
     schedule_minutes: int = 0          # app only: 0 = never run automatically
     data_dir: Path = Path("data")
     creators: list[Creator] = field(default_factory=list)
@@ -118,6 +119,19 @@ class Config:
             if f" {re.sub(r'[^a-z0-9]+', ' ', phrase).strip()} " in t:
                 return label
         return ""
+
+    def wanted_language(self, clip) -> bool:
+        """With english_only on: keep clips the platform marks as English, and for platforms that
+        don't say, clips whose title isn't mostly in another alphabet."""
+        if not self.english_only:
+            return True
+        if clip.language:
+            return clip.language.lower().startswith("en")
+        letters = [ch for ch in clip.title if ch.isalpha()]
+        if not letters:
+            return True
+        latin = sum(1 for ch in letters if ch.isascii())
+        return latin / len(letters) >= 0.7
 
     def category_of(self, clip) -> str:
         if clip.category:

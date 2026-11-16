@@ -311,6 +311,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         hidden_games = {g.lower() for g in muted.get("games", [])}
         items = []
         for clip in db.by_status(con, "discovered"):
+            if not c.wanted_language(clip):
+                continue
             game = clip.game or (clip.category if clip.category != "General" else "")
             if creator_key(clip) in hidden_creators or (game and game.lower() in hidden_games):
                 continue

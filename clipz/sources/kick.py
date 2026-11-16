@@ -103,6 +103,7 @@ def _clip(cfg: Config, d: dict, now, creator: str, credit: str, category: str = 
         preview=d.get("playback_url") or d.get("clip_url") or d.get("video_url") or "",
         uploader=clipper if clipper and clipper.lower() != slug.lower() else "",
         category=category, game=(game_labels or {}).get(game.lower(), game),
+        language=d.get("language") or (d.get("livestream") or {}).get("language") or "",
     )
 
 

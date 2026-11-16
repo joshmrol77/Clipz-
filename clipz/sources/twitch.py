@@ -98,7 +98,7 @@ def _clip(d: dict, creator: str, credit: str, now, category: str = "", game: str
         title=d["title"], url=d["url"], views=d["view_count"], created_at=d["created_at"],
         duration=d["duration"], score=velocity(d["view_count"], d["created_at"], now),
         thumbnail=d.get("thumbnail_url", ""), preview=f"https://clips.twitch.tv/embed?clip={d['id']}",
-        uploader=d.get("creator_name", ""), category=category, game=game,
+        uploader=d.get("creator_name", ""), category=category, game=game, language=d.get("language", ""),
     )
 
 

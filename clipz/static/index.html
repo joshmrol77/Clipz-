@@ -118,6 +118,9 @@
   .sheet { position: fixed; inset: auto 0 0 0; margin: 0; width: 100%; max-width: 100%; border-radius: 16px 16px 0 0;
            padding: 14px 16px calc(18px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
   .sheet[open] { display: flex; }
+  .sheet:not([open]), #editor:not([open]) { display: none; }   /* our display:flex must not keep a closed sheet on screen */
+  .sheet .x { position: absolute; top: 8px; right: 10px; width: 36px; height: 36px; padding: 0; border-radius: 50%;
+              text-align: center; font-size: 16px; line-height: 34px; }
   .sheet button { text-align: left; padding: 13px 14px; font-size: 15px; }
   .sheet h3 { margin: 4px 0 6px; font-size: 15px; }
   .cat-head { margin: 18px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
@@ -866,6 +869,7 @@ function renderSettings() {
     max_clips_per_run: text(st.max_clips_per_run, "", "number"), max_duration: text(st.max_duration, "", "number"),
     schedule_minutes: text(st.schedule_minutes, "", "number"),
     auto_approve: h("input", { type: "checkbox", checked: st.auto_approve, on: { change: () => dirty = true } }),
+    english_only: h("input", { type: "checkbox", checked: st.english_only, on: { change: () => dirty = true } }),
     layout: h("select", { on: { change: () => dirty = true } }, Object.keys(S.layouts).map(l => h("option", { value: l, selected: st.layout === l }, NAMES[l] || l))),
     twId: text(""), twSecret: text("", "", "password"),
   };
@@ -873,7 +877,7 @@ function renderSettings() {
   const save = () => api("POST", "/api/settings", {
     game: f.game.value, keywords: list(f.keywords), hashtags: list(f.hashtags),
     lookback_hours: f.lookback_hours.value, min_views: f.min_views.value, max_clips_per_run: f.max_clips_per_run.value,
-    max_duration: f.max_duration.value, schedule_minutes: f.schedule_minutes.value, auto_approve: f.auto_approve.checked, layout: f.layout.value,
+    max_duration: f.max_duration.value, schedule_minutes: f.schedule_minutes.value, auto_approve: f.auto_approve.checked, english_only: f.english_only.checked, layout: f.layout.value,
   });
   const twitchId = st.twitch.client_id || "";
   const shortId = twitchId.length > 10 ? twitchId.slice(0, 4) + "…" + twitchId.slice(-4) : twitchId;
@@ -895,7 +899,8 @@ function renderSettings() {
       h("div", { className: "row", style: "margin-top:10px" },
         field("Clips from the", f.lookback_hours), field("Minimum views", f.min_views),
         field("Max clip length (seconds)", f.max_duration)),
-      h("div", { className: "row", style: "margin-top:10px" }, field("Default format", f.layout))),
+      h("div", { className: "row", style: "margin-top:10px" }, field("Default format", f.layout)),
+      h("label", { className: "check", style: "margin-top:12px" }, f.english_only, "English clips only")),
     h("div", { className: "panel" },
       h("h2", {}, "Autopilot"),
       h("p", { className: "muted" }, S.cloud
@@ -907,6 +912,18 @@ function renderSettings() {
 }
 
 $("editor").addEventListener("close", () => { editing = null; });
+// Sheets close when you tap outside them, and always get an ✕ in the corner.
+for (const d of [$("sheet"), $("editor")]) {
+  d.addEventListener("click", e => {
+    if (e.target !== d) return;
+    const r = d.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close();
+  });
+}
+new MutationObserver(() => {
+  const d = $("sheet");
+  if (d.open && !d.querySelector(":scope > .x")) d.prepend(h("button", { className: "x", "aria-label": "Close", on: { click: () => d.close() } }, "✕"));
+}).observe($("sheet"), { childList: true, attributes: true, attributeFilter: ["open"] });
 $("run").addEventListener("click", () => api("POST", "/api/run"));
 $("post").addEventListener("click", () => api("POST", "/api/publish"));
 show();

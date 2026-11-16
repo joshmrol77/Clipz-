@@ -30,7 +30,8 @@ def con(request, tmp_path):
 
 
 def clip(i="a", **kw):
-    return Clip(id=f"twitch:{i}", platform="twitch", creator="x", credit="twitch.tv/x", title="t", url="u", **kw)
+    fields = dict(id=f"twitch:{i}", platform="twitch", creator="x", credit="twitch.tv/x", title="t", url="u")
+    return Clip(**{**fields, **kw})
 
 
 def test_database_round_trip_on_both_engines(con):
@@ -595,3 +596,22 @@ def test_feed_gets_direct_video_for_autoplay(cloud_app, monkeypatch):
     assert get("twitch:a") == "https://cdn/clip.mp4" and get("twitch:a") == "https://cdn/clip.mp4"
     assert calls == ["https://clips.twitch.tv/a"]                       # looked up once, then remembered
     assert get("kick:b") == "https://k/b.m3u8" and get("youtube:c") == ""
+
+
+def test_english_only_keeps_english_clips(cfg):
+    assert cfg.english_only
+    keep = [clip("a", language="en"), clip("b", language="en-gb"), clip("c", title="Speed loses it 😂"),
+            clip("d", title="")]
+    drop = [clip("e", language="es"), clip("f", title="Спид проиграл в GTA 6"), clip("g", title="스피드 GTA 6 레전드")]
+    assert all(cfg.wanted_language(c) for c in keep)
+    assert not any(cfg.wanted_language(c) for c in drop)
+    cfg.english_only = False
+    assert all(cfg.wanted_language(c) for c in drop)
+
+
+def test_feed_hides_non_english_clips_already_found(cloud_app):
+    client, _, base = cloud_app
+    con = config.load("config.toml").connect()
+    db.add(con, clip("en", language="en"))
+    db.add(con, clip("pt", language="pt"))
+    assert [x["id"] for x in client.get("/api/feed", **base).get_json()["clips"]] == ["twitch:en"]

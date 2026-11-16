@@ -29,4 +29,7 @@ def discover(cfg: Config, log=print) -> list[Clip]:
     for clip in found:   # e.g. a YouTube upload titled "Speed plays GTA 6" counts as GTA 6
         if not clip.game:
             clip.game = cfg.infer_game(clip.title)
-    return found
+    kept = [c for c in found if cfg.wanted_language(c)]
+    if len(kept) < len(found):
+        log(f"  skipped {len(found) - len(kept)} clip(s) not in English")
+    return kept

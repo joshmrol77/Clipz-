@@ -53,6 +53,7 @@ class Clip:
     approve: str = ""       # "1" = approve as soon as it's edited
     autopost: str = ""      # "1" = and post it to the connected accounts straight away
     seen: str = ""          # "1" once it has been shown in the feed
+    language: str = ""      # e.g. "en", when the platform says
 
 
 COLUMNS = list(Clip.__dataclass_fields__)
@@ -125,7 +126,7 @@ def credit_line(clip: Clip) -> str:
 def _clip(row) -> Clip:
     data = dict(row)
     for c in ("src_path", "out_path", "published_url", "error", "layout", "background",
-              "thumbnail", "preview", "uploader", "category", "game", "approve", "seen", "autopost"):
+              "thumbnail", "preview", "uploader", "category", "game", "approve", "seen", "autopost", "language"):
         data[c] = data.get(c) or ""
     return Clip(**{c: data[c] for c in COLUMNS})
 
