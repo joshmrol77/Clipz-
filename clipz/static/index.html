@@ -114,10 +114,10 @@
                    padding: 6px 12px; font-size: 13px; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .feedbar .pill.set { background: var(--accent); border-color: var(--accent); }
   .feedbar .logo { font-weight: 800; color: #fff; margin-right: auto; font-size: 18px; text-shadow: 0 1px 3px #000; }
-  @media (max-width: 390px) {
-    .feedbar { gap: 6px; padding-left: 10px; padding-right: 10px; }
-    .feedbar .pill { padding: 5px 9px; font-size: 12px; max-width: 30vw; }
-    .feedbar .logo { font-size: 16px; }
+  @media (max-width: 430px) {   /* four filter buttons need the room: drop the name */
+    .feedbar { gap: 6px; padding-left: 10px; padding-right: 10px; justify-content: flex-end; }
+    .feedbar .pill { padding: 5px 9px; font-size: 12px; max-width: 26vw; }
+    .feedbar .logo { display: none; }
   }
   .reel.empty { flex-direction: column; gap: 14px; padding: 24px; text-align: center; color: var(--muted); }
   .toast { position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 40;
@@ -230,7 +230,8 @@ async function refresh() {
 
 // ---- Feed: swipe through clips like Reels ---------------------------------------------------
 let lastJob = "";
-const feed = { loaded: false, loading: false, clips: [], total: 0, game: "", creator: "", creatorName: "", active: null, seen: new Set() };
+const feed = { loaded: false, loading: false, clips: [], total: 0, game: "", creator: "", creatorName: "", views: "", active: null, seen: new Set() };
+const VIEW_NAMES = { "": "Any views", "0-100": "0–100", "100-1000": "100–1K", "1000-10000": "1K–10K", "10000-100000": "10K–100K", "100000-": "100K+" };
 const ago = iso => {
   const h = (Date.now() - new Date(iso).getTime()) / 3.6e6;
   return !isFinite(h) ? "" : h < 1 ? Math.max(1, Math.round(h * 60)) + "m ago" : h < 48 ? Math.round(h) + "h ago" : Math.round(h / 24) + "d ago";
@@ -324,7 +325,7 @@ function updateFeedbar() {
 // After each background search, add whatever is new to the end of the feed - no tapping needed.
 async function topUpFeed() {
   if (feed.loading) return;
-  const q = new URLSearchParams({ game: feed.game, creator: feed.creator, offset: 0, limit: 50 });
+  const q = new URLSearchParams({ game: feed.game, creator: feed.creator, views: feed.views, offset: 0, limit: 50 });
   const data = await (await fetch("/api/feed?" + q)).json().catch(() => null);
   if (!data) return;
   const fresh = (data.clips || []).filter(c => !feed.clips.some(x => x.id === c.id));
@@ -342,7 +343,7 @@ async function loadFeed(reset) {
   if (feed.loading) return;
   feed.loading = true;
   if (reset) { feed.clips = []; feed.active = null; buildFeed(); }
-  const q = new URLSearchParams({ game: feed.game, creator: feed.creator, offset: feed.clips.length, limit: 10 });
+  const q = new URLSearchParams({ game: feed.game, creator: feed.creator, views: feed.views, offset: feed.clips.length, limit: 10 });
   const data = await (await fetch("/api/feed?" + q)).json().catch(() => ({ clips: [], total: 0 }));
   const fresh = (data.clips || []).filter(c => !feed.clips.some(x => x.id === c.id));
   feed.clips.push(...fresh); feed.total = data.total || 0; feed.loaded = true; feed.loading = false;
@@ -359,6 +360,7 @@ function buildFeed() {
     h("span", { className: "logo" }, "Clipz"),
     h("button", { className: "pill" + (feed.game ? " set" : ""), on: { click: () => openFilter("game") } }, filterLabel + " ▾"),
     h("button", { className: "pill" + (feed.creator ? " set" : ""), on: { click: () => openFilter("creator") } }, (feed.creatorName || "Creator") + " ▾"),
+    h("button", { className: "pill" + (feed.views ? " set" : ""), on: { click: () => openFilter("views") } }, (feed.views ? VIEW_NAMES[feed.views] : "Views") + " ▾"),
     h("button", { className: "pill find", on: { click: () => api("POST", "/api/run").then(() => toast("Looking for new clips…")) } }, "Find clips")));
   updateFeedbar();
   feed.observer?.disconnect();
@@ -368,14 +370,14 @@ function buildFeed() {
 }
 
 function emptyReel() {
-  const filtered = feed.game || feed.creator;
+  const filtered = feed.game || feed.creator || feed.views;
   return h("div", { className: "reel empty" },
     h("div", { style: "font-size:40px" }, "✓"),
     h("div", { style: "color:#fff;font-weight:700;font-size:18px" }, filtered ? "Nothing here for this filter" : S && S.job ? "Finding clips…" : "You're all caught up"),
     h("div", {}, S && S.job && !filtered ? "New clips appear here by themselves - keep the app open." : ""),
     h("div", {}, !S.creators.length && !(S.games || []).length ? "Follow streamers or games on the Following tab, then tap Find clips."
       : filtered ? "Try another game or creator, or clear the filter." : "Tap Find clips to look for more."),
-    filtered ? h("button", { on: { click: () => { feed.game = feed.creator = feed.creatorName = ""; loadFeed(true); } } }, "Clear filter")
+    filtered ? h("button", { on: { click: () => { feed.game = feed.creator = feed.creatorName = feed.views = ""; loadFeed(true); } } }, "Clear filters")
       : h("button", { className: "primary", on: { click: () => api("POST", "/api/run").then(() => toast("Looking for new clips…")) } }, "Find clips"));
 }
 
@@ -519,16 +521,22 @@ async function openFilter(kind) {
   const data = await (await fetch("/api/feed/filters")).json().catch(() => ({ games: [], creators: [] }));
   const pick = (value, name) => {
     d.close();
-    if (kind === "game") feed.game = value; else { feed.creator = value; feed.creatorName = name; }
+    if (kind === "game") feed.game = value;
+    else if (kind === "views") feed.views = value;
+    else { feed.creator = value; feed.creatorName = name; }
     loadFeed(true);
   };
-  const items = kind === "game"
+  const items = kind === "views"
+    ? (data.views || []).map(v => h("button", { on: { click: () => pick(v.range) } }, `${VIEW_NAMES[v.range]} views  ·  ${v.count}`))
+    : kind === "game"
     ? data.games.map(g => h("button", { on: { click: () => pick(g.name) } }, `${g.name}${g.count ? "  ·  " + g.count : ""}`))
     : data.creators.map(c => h("button", { on: { click: () => pick(c.key, c.name) } },
         h("span", { className: "plat " + c.platform, style: "margin-right:8px" }, c.platform), `${c.name}${c.count ? "  ·  " + c.count : ""}`));
   d.replaceChildren(
-    h("h3", {}, kind === "game" ? "Show clips from game" : "Show clips from creator"),
-    h("button", { on: { click: () => pick("", "") } }, kind === "game" ? "All games" : "All creators"),
+    h("h3", {}, { game: "Show clips from game", creator: "Show clips from creator", views: "Show clips with views" }[kind]),
+    h("button", { on: { click: () => pick("", "") } }, { game: "All games", creator: "All creators", views: "Any number of views" }[kind]),
+    kind === "views" && S.settings.min_views > 0 ? h("div", { className: "muted", style: "font-size:13px" },
+      `Clips under ${S.settings.min_views} views aren't collected - lower "Minimum views" in Settings to see them.`) : null,
     h("div", { style: "max-height:55vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px" },
       items.length ? items : h("div", { className: "muted" }, "Nothing to filter by yet - follow streamers or games and find clips first.")),
     h("button", { on: { click: () => d.close() } }, "Cancel"));

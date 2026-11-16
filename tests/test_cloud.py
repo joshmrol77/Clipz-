@@ -641,3 +641,15 @@ def test_clip_actions_work_when_the_host_passes_the_path_still_encoded(cloud_app
     assert raw("get", "/api/clips/twitch%3Aa/stream").get_json()["url"] == "https://cdn/a.mp4"
     assert raw("post", "/api/clips/twitch%3Aa/skip").status_code == 200
     assert db.get(con, "twitch:a").status == "skipped"
+
+
+def test_feed_view_ranges(cloud_app):
+    client, _, base = cloud_app
+    con = config.load("config.toml").connect()
+    for i, views in enumerate((40, 100, 999, 5000, 250000)):
+        db.add(con, clip(str(i), views=views, score=10 - i))
+    get = lambda r: [x["views"] for x in client.get(f"/api/feed?views={r}", **base).get_json()["clips"]]
+    assert get("0-100") == [40] and get("100-1000") == [100, 999] and get("100000-") == [250000]
+    assert get("") == [40, 100, 999, 5000, 250000] and get("junk") == [40, 100, 999, 5000, 250000]
+    counts = {v["range"]: v["count"] for v in client.get("/api/feed/filters", **base).get_json()["views"]}
+    assert counts == {"0-100": 1, "100-1000": 2, "1000-10000": 1, "10000-100000": 0, "100000-": 1}

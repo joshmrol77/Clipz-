@@ -50,6 +50,18 @@ border-color:#7c5cff;font-weight:600}p{color:#e5484d;margin:0}</style>
 
 
 
+VIEW_RANGES = ("0-100", "100-1000", "1000-10000", "10000-100000", "100000-")
+
+
+def view_range(text: str) -> tuple[float, float]:
+    """"100-1000" -> (100, 1000); "100000-" -> (100000, inf); "" -> everything."""
+    low, _, high = (text or "").partition("-")
+    try:
+        return float(low or 0), float(high) if high else float("inf")
+    except ValueError:
+        return 0.0, float("inf")
+
+
 class ClipIdConverter(PathConverter):
     """Clip ids contain ":" (e.g. "twitch:AbC"), which the page sends as "%3A". Vercel hands
     the path over still encoded, so decode it here or no clip would ever be found."""
@@ -338,18 +350,22 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         c = cfg()
         con = c.connect()
         game, creator, category = (request.args.get(k, "") for k in ("game", "creator", "category"))
+        low, high = view_range(request.args.get("views", ""))
         offset, limit = int(request.args.get("offset", 0)), min(int(request.args.get("limit", 20)), 50)
         items = [x for x in feed_items(c, con)
                  if (not game or x["game"].lower() == game.lower())
                  and (not creator or x["key"] == creator.lower())
-                 and (not category or x["category"] == category)]
+                 and (not category or x["category"] == category)
+                 and low <= (x["views"] or 0) < high]
         return jsonify(clips=items[offset:offset + limit], total=len(items))
 
     @app.get("/api/feed/filters")
     def feed_filters():
-        """What the feed can be narrowed to: games and creators that have clips waiting."""
+        """What the feed can be narrowed to: games, creators and view ranges with clips waiting."""
         c = cfg()
         items = feed_items(c, c.connect())
+        views = [{"range": r, "count": sum(1 for x in items if view_range(r)[0] <= (x["views"] or 0) < view_range(r)[1])}
+                 for r in VIEW_RANGES]
         games, creators = {}, {}
         for x in items:
             if x["game"]:
@@ -368,7 +384,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
                 creators.setdefault(key, {"key": key, "name": cr.name or cr.channel, "platform": cr.platform, "count": 0})
         return jsonify(
             games=[{"name": n, "count": k} for n, k in sorted(games.items(), key=lambda kv: (-kv[1], kv[0].lower()))],
-            creators=sorted(creators.values(), key=lambda x: (-x["count"], x["name"].lower()))[:60])
+            creators=sorted(creators.values(), key=lambda x: (-x["count"], x["name"].lower()))[:60],
+            views=views)
 
     @app.get("/api/clips/<clip:clip_id>/stream")
     def clip_stream(clip_id):
