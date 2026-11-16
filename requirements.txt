@@ -4,3 +4,4 @@ flask
 imageio-ffmpeg
 psycopg[binary]
 vercel
+curl_cffi>=0.10,<0.18

@@ -65,7 +65,7 @@ def process(cfg: Config, con, clips, log=print) -> None:
             ref = files.save(cfg, out, "out")
             if clip.out_path and clip.out_path != ref:
                 files.remove(cfg, clip.out_path)   # the previous edit of this clip
-            status = "approved" if cfg.auto_approve else "rendered"
+            status = "approved" if cfg.auto_approve or clip.approve else "rendered"
             db.update(con, clip.id, status=status, out_path=ref, error="")
             log(f"  ready [{layout}, {status}]")
         except Exception as e:

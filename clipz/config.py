@@ -66,6 +66,8 @@ class Config:
     creators: list[Creator] = field(default_factory=list)
     # Followed games: [{"name": Twitch category name, "twitch_id", "image", "label": what you call it}]
     games: list[dict] = field(default_factory=list)
+    # Hidden from the feed: {"creators": ["platform:name"], "games": ["name"], "labels": {value: shown name}}
+    muted: dict = field(default_factory=dict)
     twitch: dict = field(default_factory=dict)
     render: dict = field(default_factory=dict)
     youtube_upload: dict = field(default_factory=dict)

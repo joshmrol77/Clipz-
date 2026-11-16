@@ -5,7 +5,7 @@ from ..db import Clip
 from . import kick, twitch, youtube
 
 _SOURCES = {"twitch": twitch, "kick": kick, "youtube": youtube}
-_GAME_SOURCES = {"twitch": twitch, "youtube": youtube}   # Kick has no category clips feed we can use
+_GAME_SOURCES = {"twitch": twitch, "kick": kick, "youtube": youtube}
 
 
 def discover(cfg: Config, log=print) -> list[Clip]:

@@ -21,9 +21,9 @@ Your browser opens at <http://127.0.0.1:8777>. Everything is done from four tabs
 
 | Tab | What you do there |
 |---|---|
-| **Browse** | Every clip Clipz found, best first, filtered by category. Play them right there, then **Edit this clip** or **Skip**. |
-| **Edited** | Your picked clips as finished vertical videos: change the layout, then Approve or Reject. |
-| **Streamers** | **Follow games** (e.g. GTA 6) to get their most-viewed clips from everyone streaming them on Twitch plus the most-viewed short YouTube videos about them. Search for streamers on Twitch, Kick or YouTube as you type, put each in a category (e.g. "GTA 6", "IRL"), choose "only the game" or "all their clips", and optionally give them their own hashtags. |
+| **Feed** | Swipe through found clips full-screen, like Reels. Filter by **Game** or **Creator** at the top. On each clip: **Save to publishing** (it gets edited and is ready to post), **Don't show more like this** (hide the clip, or everything from that creator or game), or just swipe on. |
+| **Publishing** | Saved clips as finished vertical videos: change the layout, then post. |
+| **Following** | **Follow games** (e.g. GTA 6) to get their most-viewed clips from everyone on Twitch, Kick and YouTube, and follow streamers on any of the three (search as you type). Undo "Don't show more like this" here too. |
 | **Accounts** | Connect YouTube, TikTok and Instagram. |
 | **Settings** | Connect Twitch, choose the game, turn on autopilot or auto-editing. |
 

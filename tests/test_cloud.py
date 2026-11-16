@@ -312,26 +312,55 @@ def test_blob_store_id_connection_counts_as_connected(monkeypatch):
 
 # ---- Browse, categories and searching every platform -------------------------------------------
 
-def test_browse_lists_finds_by_category_and_edit_skip_work(cloud_app):
+def test_feed_filters_by_game_and_creator_and_save_hide_seen_work(cloud_app):
     client, woke, base = cloud_app
     c = config.load("config.toml")
     config.save_settings(c, {"creators": [
-        {"platform": "twitch", "channel": "togi", "category": "IRL"},
-        {"platform": "twitch", "channel": "gtaguy", "category": "GTA 6"}]})
+        {"platform": "twitch", "channel": "togi", "name": "TOGI", "category": "IRL"},
+        {"platform": "kick", "channel": "speed", "category": "IRL"}]})
     con = c.connect()
-    db.add(con, Clip(id="twitch:1", platform="twitch", creator="togi", credit="x", title="a", url="u", score=2))
-    db.add(con, Clip(id="twitch:2", platform="twitch", creator="gtaguy", credit="x", title="b", url="u", score=1))
-    db.add(con, Clip(id="twitch:3", platform="twitch", creator="gtaguy", credit="x", title="c", url="u", status="skipped"))
-    get = lambda q="": client.get("/api/browse" + q, **base).get_json()
-    assert [x["id"] for x in get()["clips"]] == ["twitch:1", "twitch:2"]          # skipped ones hidden
-    assert [x["id"] for x in get("?category=IRL")["clips"]] == ["twitch:1"]
-    assert client.get("/api/state", **base).get_json()["categories"] == ["GTA 6", "IRL"]
-    act = lambda cid, a: client.post(f"/api/clips/{cid}/{a}", data="{}", content_type="application/json",
-                                     headers={"X-Clipz": "1"}, **base)
-    assert act("twitch:1", "edit").status_code == 200 and woke                       # starts editing
-    assert db.get(con, "twitch:1").status == "queued"
-    assert act("twitch:2", "skip").status_code == 200
-    assert get()["total"] == 1
+    add = lambda cid, plat, who, game, score, **kw: db.add(con, Clip(
+        id=cid, platform=plat, creator=who, credit="x", title=cid, url="u", score=score, game=game, **kw))
+    add("twitch:1", "twitch", "togi", "Just Chatting", 5)
+    add("twitch:2", "twitch", "BigGuy", "GTA 6", 4, category="GTA 6")
+    add("kick:3", "kick", "speed", "GTA 6", 3)
+    add("youtube:4", "youtube", "togi", "", 2)
+    add("twitch:5", "twitch", "togi", "Just Chatting", 1, status="skipped")
+    get = lambda q="": client.get("/api/feed" + q, **base).get_json()
+    send = lambda method, url, body=None: getattr(client, method)(url, data=json.dumps(body or {}), content_type="application/json",
+                                                                 headers={"X-Clipz": "1"}, **base)
+    assert [x["id"] for x in get()["clips"]] == ["twitch:1", "twitch:2", "kick:3", "youtube:4"]
+    assert [x["id"] for x in get("?game=gta 6")["clips"]] == ["twitch:2", "kick:3"]
+    assert [x["id"] for x in get("?creator=twitch:togi")["clips"]] == ["twitch:1"]
+    assert [x["id"] for x in get("?creator=kick:speed&game=GTA 6")["clips"]] == ["kick:3"]
+    filters = client.get("/api/feed/filters", **base).get_json()
+    assert filters["games"][0] == {"name": "GTA 6", "count": 2}
+    assert {"key": "kick:speed", "name": "speed", "platform": "kick", "count": 1} in filters["creators"]
+
+    send("post", "/api/clips/seen", {"ids": ["twitch:1"]})                       # seen ones move to the back
+    assert get()["clips"][-1]["id"] == "twitch:1"
+    assert send("post", "/api/clips/twitch:2/save").status_code == 200 and woke  # save to publishing
+    saved = db.get(con, "twitch:2")
+    assert (saved.status, saved.approve) == ("queued", "1")
+    send("post", "/api/mute", {"kind": "creator", "value": "kick:speed", "label": "speed"})
+    assert [x["id"] for x in get()["clips"]] == ["youtube:4", "twitch:1"]
+    send("post", "/api/mute", {"kind": "game", "value": "Just Chatting"})
+    assert [x["id"] for x in get()["clips"]] == ["youtube:4"]
+    send("delete", "/api/mute", {"kind": "creator", "value": "kick:speed"})
+    assert "kick:3" in [x["id"] for x in get()["clips"]]
+    muted = client.get("/api/state", **base).get_json()["muted"]
+    assert muted["games"] == ["Just Chatting"] and muted["creators"] == []
+
+
+def test_saved_clips_are_ready_to_post_after_editing(cfg, monkeypatch, tmp_path):
+    import subprocess
+    src = tmp_path / "src.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=s=640x360:d=1",
+                    "-f", "lavfi", "-i", "sine=d=1", "-shortest", "-pix_fmt", "yuv420p", str(src)], check=True)
+    con = cfg.connect()
+    db.add(con, clip(status="queued", src_path=str(src), approve="1"))
+    pipeline.process(cfg, con, db.by_status(con, "queued"), lambda m: None)
+    assert db.get(con, "twitch:a").status == "approved"
 
 
 def test_youtube_channel_search_and_clips_from_other_uploaders(cfg, monkeypatch):
@@ -435,6 +464,8 @@ def test_youtube_filter_is_most_viewed_within_the_window():
 
 def test_game_follow_endpoints_and_streamer_filter_toggle(cloud_app, monkeypatch):
     client, _, base = cloud_app
+    from clipz.sources import kick
+    monkeypatch.setattr(kick, "search_categories", lambda q: [{"slug": "grand-theft-auto-vi", "name": "Grand Theft Auto VI"}])
     send = lambda method, url, body: getattr(client, method)(url, data=json.dumps(body), content_type="application/json",
                                                             headers={"X-Clipz": "1"}, **base)
     assert send("post", "/api/games", {"name": ""}).status_code == 400
@@ -442,8 +473,44 @@ def test_game_follow_endpoints_and_streamer_filter_toggle(cloud_app, monkeypatch
     assert send("post", "/api/games", {"id": "999", "name": "grand theft auto vi"}).status_code == 400   # already following
     state = client.get("/api/state", **base).get_json()
     assert state["games"][0]["label"] == "GTA 6" and "GTA 6" in state["categories"]
+    assert state["games"][0]["kick_slug"] == "grand-theft-auto-vi"
     send("delete", "/api/games", {"name": "Grand Theft Auto VI"})
     assert client.get("/api/state", **base).get_json()["games"] == []
     send("post", "/api/creators", {"platform": "twitch", "channel": "speed", "all_content": True})
     send("post", "/api/creators/toggle", {"platform": "twitch", "channel": "speed"})
     assert client.get("/api/state", **base).get_json()["creators"][0]["all_content"] is False
+
+
+def test_kick_clips_use_current_endpoints(cfg, monkeypatch):
+    from clipz.config import Creator
+    from clipz.sources import kick
+    now = datetime_now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    calls = []
+
+    def fake_get(url, **params):
+        calls.append((url, params))
+        if url.endswith("/api/v2/channels/speed"):
+            return {"id": 42, "slug": "speed", "user": {"username": "Speed"}}
+        if "/channels/42/clips" in url:
+            return {"data": {"clips": [
+                {"id": "clip_1", "title": "huge", "views_count": 9000, "created_at": now, "duration": 30,
+                 "thumbnail_url": "t.jpg", "playback_url": "https://clips.kick.com/1.m3u8",
+                 "category": {"name": "Grand Theft Auto VI"}, "channel": {"slug": "speed"}, "creator": {"username": "fan1"}}],
+                "cursor": ""}}
+        if "/categories/grand-theft-auto-vi/clips" in url:
+            return {"data": {"clips": [
+                {"id": "clip_2", "title": "heist", "views": 5000, "created_at": now, "duration": 20,
+                 "channel": {"slug": "otherguy"}, "category": {"name": "Grand Theft Auto VI"}}]}}
+        raise LookupError("not found on Kick")
+    monkeypatch.setattr(kick, "_get", fake_get)
+    cfg.games = [{"name": "Grand Theft Auto VI", "label": "GTA 6", "kick_slug": "grand-theft-auto-vi"}]
+    cfg.min_views = 50
+    [c1] = kick.discover(cfg, [Creator("kick", "speed", all_content=True)])
+    assert calls[1][0] == "https://web.kick.com/api/v1/channels/42/clips" and calls[1][1]["sort"] == "views"
+    assert (c1.id, c1.views, c1.uploader, c1.game, c1.url) == ("kick:clip_1", 9000, "fan1", "GTA 6", "https://kick.com/speed/clips/clip_1")
+    assert c1.preview.endswith(".m3u8")
+    [c2] = kick.discover_games(cfg, cfg.games)
+    assert (c2.creator, c2.credit, c2.category, c2.game) == ("otherguy", "kick.com/otherguy", "GTA 6", "GTA 6")
+    # exact channel names still come up when Kick's search finds nothing
+    monkeypatch.setattr(kick, "_get", lambda url, **p: {"channels": []} if "search" in url else fake_get(url, **p))
+    assert kick.search_channels(cfg, "speed")[0]["login"] == "speed"

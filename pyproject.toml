@@ -10,6 +10,7 @@ dependencies = [
     "imageio-ffmpeg",     # ships a known-good ffmpeg, so nothing else needs installing
     "psycopg[binary]",    # Postgres, for the cloud version
     "vercel",             # Vercel Blob storage, for the cloud version
+    "curl_cffi>=0.10,<0.18",  # browser-like requests Kick requires; yt-dlp supports up to 0.17
 ]
 
 [project.optional-dependencies]

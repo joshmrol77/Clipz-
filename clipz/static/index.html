@@ -66,29 +66,53 @@
   .filters button.on { border-color: var(--accent); color: var(--text); }
   code { background: var(--bg); padding: 1px 6px; border-radius: 6px; overflow-wrap: anywhere; }
   .hidden { display: none; }
-  .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-width: 900px; margin: 0 auto; }
-  .tile { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
-          cursor: pointer; display: flex; flex-direction: column; min-width: 0; }
-  .tile .thumb { position: relative; aspect-ratio: 3/4; background: #000; }
-  .tile .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .tile .x { position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; padding: 0; border-radius: 50%;
-             border: 0; background: rgba(0,0,0,.65); color: #fff; font-size: 14px; line-height: 26px; text-align: center; z-index: 2; }
-  .tile .length { position: absolute; left: 5px; bottom: 5px; background: rgba(0,0,0,.75); color: #fff; font-size: 11px; padding: 0 5px; border-radius: 4px; }
-  .tile .flag { position: absolute; left: 5px; top: 5px; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 99px; background: var(--good); color: #06240f; }
-  .tile .flag.wait { background: var(--warn); }
-  .tile .flag.bad { background: var(--bad); color: #fff; }
-  .tile .info { padding: 6px 7px 8px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .tile .t { font-size: 12px; font-weight: 600; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
-  .tile .m { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #viewer .player { position: relative; aspect-ratio: 16/9; background: #000; border-radius: 10px; overflow: hidden; }
-  #viewer .player iframe, #viewer .player video, #viewer .player img { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-  #viewer .player img { object-fit: cover; }
-  .chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 14px; }
-  .chips button { white-space: nowrap; border-radius: 99px; }
-  .chips button.on { border-color: var(--accent); background: var(--accent); color: #fff; }
-  .game-art { width: 36px; height: 48px; border-radius: 4px; object-fit: cover; flex: none; background: var(--line); }
-  .suggest img.game-art { border-radius: 4px; width: 36px; height: 48px; }
-  button.badge { cursor: pointer; padding: 1px 8px; font: inherit; font-size: 12px; font-weight: 600; }
+  /* bottom tab bar, like Instagram */
+  main { padding-bottom: 90px; }
+  nav#tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; margin: 0; display: flex; gap: 0;
+             background: rgba(15,17,21,.96); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); flex-wrap: nowrap; }
+  nav#tabs button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px 7px;
+                    border: 0; font-size: 11px; color: var(--muted); min-width: 0; }
+  nav#tabs button svg { width: 24px; height: 24px; }
+  nav#tabs button.on { color: var(--text); border: 0; }
+  body.on-feed header { display: none; }
+  body.on-feed main { padding: 0; }
+  /* the swipe feed */
+  #feed { position: fixed; inset: 0 0 calc(57px + env(safe-area-inset-bottom)) 0; overflow-y: scroll; scroll-snap-type: y mandatory;
+          background: #000; overscroll-behavior: contain; scrollbar-width: none; }
+  #feed::-webkit-scrollbar { display: none; }
+  .reel { position: relative; height: 100%; scroll-snap-align: start; scroll-snap-stop: always; overflow: hidden;
+          display: flex; align-items: center; justify-content: center; }
+  .reel .bg { position: absolute; inset: -40px; background-size: cover; background-position: center; filter: blur(30px) brightness(.45); }
+  .reel .stage { position: relative; width: 100%; max-width: 900px; aspect-ratio: 16/9; background: #000; }
+  .reel .stage > * { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; object-fit: contain; }
+  .reel .stage img { object-fit: cover; }
+  .reel .meta { position: absolute; left: 14px; right: 84px; bottom: 18px; text-shadow: 0 1px 3px rgba(0,0,0,.9); }
+  .reel .who { font-weight: 700; font-size: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .reel .plat { font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; color: #fff; }
+  .plat.twitch { background: #9146ff; } .plat.kick { background: #53fc18; color: #000 !important; } .plat.youtube { background: #ff0033; }
+  .reel .title { margin-top: 4px; font-size: 15px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+  .reel .sub { margin-top: 4px; font-size: 13px; color: #d6d9e2; }
+  .reel .actions { position: absolute; right: 10px; bottom: 22px; display: flex; flex-direction: column; gap: 18px; align-items: center; }
+  .reel .act { display: flex; flex-direction: column; align-items: center; gap: 4px; background: none; border: 0; padding: 0;
+               color: #fff; font-size: 11px; font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,.9); max-width: 70px; text-align: center; }
+  .reel .act span.ic { width: 50px; height: 50px; border-radius: 50%; background: rgba(0,0,0,.45); display: grid; place-items: center; }
+  .reel .act span.ic svg { width: 26px; height: 26px; }
+  .reel .act.done span.ic { background: var(--good); }
+  .feedbar { position: fixed; top: 0; left: 0; right: 0; z-index: 25; display: flex; gap: 8px; align-items: center;
+             padding: calc(10px + env(safe-area-inset-top)) 12px 18px; background: linear-gradient(rgba(0,0,0,.7), transparent); pointer-events: none; }
+  .feedbar > * { pointer-events: auto; }
+  .feedbar .pill { border-radius: 99px; background: rgba(0,0,0,.5); border: 1px solid rgba(255,255,255,.25); color: #fff;
+                   padding: 6px 12px; font-size: 13px; max-width: 38vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .feedbar .pill.set { background: var(--accent); border-color: var(--accent); }
+  .feedbar .logo { font-weight: 800; color: #fff; margin-right: auto; font-size: 18px; text-shadow: 0 1px 3px #000; }
+  .reel.empty { flex-direction: column; gap: 14px; padding: 24px; text-align: center; color: var(--muted); }
+  .toast { position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 40;
+           background: #fff; color: #000; font-weight: 600; padding: 9px 16px; border-radius: 99px; font-size: 14px; max-width: calc(100vw - 32px); }
+  .sheet { position: fixed; inset: auto 0 0 0; margin: 0; width: 100%; max-width: 100%; border-radius: 16px 16px 0 0;
+           padding: 14px 16px calc(18px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
+  .sheet[open] { display: flex; }
+  .sheet button { text-align: left; padding: 13px 14px; font-size: 15px; }
+  .sheet h3 { margin: 4px 0 6px; font-size: 15px; }
   .cat-head { margin: 18px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
   .suggest-wrap { position: relative; flex: 1 1 220px; min-width: 0; display: flex; }
   .suggest-wrap > input { flex: 1; min-width: 0; }
@@ -126,22 +150,22 @@
   <h1>Clipz</h1>
   <span id="job"></span>
   <button id="run" class="primary">Find new clips</button>
-  <button id="post" class="good">Post approved clips</button>
+  <button id="post" class="good">Post ready clips</button>
 </header>
 <main>
   <nav id="tabs"></nav>
-  <section id="browse"></section>
+  <section id="feed"></section>
   <section id="clips" class="hidden"></section>
   <section id="streamers" class="hidden"></section>
   <section id="accounts" class="hidden"></section>
   <section id="settings" class="hidden"></section>
   <dialog id="editor"></dialog>
-  <dialog id="viewer"></dialog>
+  <dialog id="sheet" class="sheet"></dialog>
 </main>
 <script>
-const TABS = { browse: "Browse", clips: "Edited", streamers: "Streamers", accounts: "Accounts", settings: "Settings" };
-const FILTERS = { queued: "Being edited", rendered: "To review", approved: "Approved", published: "Posted", rejected: "Rejected", failed: "Failed" };
-let S = null, tab = (location.hash.slice(1) in TABS) ? location.hash.slice(1) : "browse", filter = "rendered";
+const TABS = { feed: "Feed", clips: "Publishing", streamers: "Following", accounts: "Accounts", settings: "Settings" };
+const FILTERS = { approved: "Ready to post", queued: "Editing", rendered: "To review", published: "Posted", rejected: "Rejected", failed: "Failed" };
+let S = null, tab = (location.hash.slice(1) in TABS) ? location.hash.slice(1) : "feed", filter = "approved";
 let editing = null, pick = null;  // clip id open in the editor, and the choices made there so far
 let dirty = false;  // true while the user is typing in a form, so refreshes don't wipe their input
 
@@ -178,114 +202,240 @@ async function refresh() {
   if (editing) renderEditor();
   const jobEnded = lastJob && !S.job;
   lastJob = S.job;
-  if (tab === "browse") { if (!browse.loaded || jobEnded) loadBrowse(true); }
+  if (tab === "feed") { if (!feed.loaded || (jobEnded && !feed.clips.length)) loadFeed(true); else if (jobEnded) feedNews(); updateFeedbar(); }
   else if (tab === "clips") renderClips();
   else if (!dirty) ({ streamers: renderStreamers, accounts: renderAccounts, settings: renderSettings })[tab]();
 }
 
-// ---- Browse: everything Clipz found, to watch and pick from ----------------------------------
+// ---- Feed: swipe through clips like Reels ---------------------------------------------------
 let lastJob = "";
-const browse = { loaded: false, category: "", clips: [], total: 0, loading: false, playing: null };
+const feed = { loaded: false, loading: false, clips: [], total: 0, game: "", creator: "", creatorName: "", active: null, seen: new Set() };
 const ago = iso => {
   const h = (Date.now() - new Date(iso).getTime()) / 3.6e6;
   return !isFinite(h) ? "" : h < 1 ? Math.max(1, Math.round(h * 60)) + "m ago" : h < 48 ? Math.round(h) + "h ago" : Math.round(h / 24) + "d ago";
 };
 const mmss = sec => sec ? `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}` : "";
-
-async function loadBrowse(reset) {
-  if (browse.loading) return;
-  browse.loading = true;
-  if (reset) { browse.clips = []; browse.playing = null; }
-  const q = new URLSearchParams({ category: browse.category, offset: browse.clips.length, limit: 20 });
-  const data = await (await fetch("/api/browse?" + q)).json().catch(() => ({ clips: [], total: 0 }));
-  browse.clips.push(...(data.clips || [])); browse.total = data.total || 0; browse.loaded = true; browse.loading = false;
-  renderBrowse();
-}
-
-function playerFor(c) {
-  if (c.platform === "kick" && c.preview)
-    return h("video", { src: c.preview, controls: true, autoplay: true, playsInline: true });
-  const url = c.platform === "twitch" ? `${c.preview}&parent=${location.hostname}&autoplay=true`
-    : c.preview + (c.preview.includes("?") ? "&" : "?") + "autoplay=1";
-  return h("iframe", { src: url, allow: "autoplay; fullscreen; encrypted-media", allowFullscreen: true });
-}
-
-async function browseAct(c, action) {
-  if (!(await api("POST", `/api/clips/${encodeURIComponent(c.id)}/${action}`))) return false;
-  if (action === "skip") { browse.clips = browse.clips.filter(x => x.id !== c.id); browse.total--; }
-  else c.status = "queued";
-  renderBrowse();
-  return true;
-}
-
-function tile(c) {
-  const flag = { queued: ["wait", "Editing…"], failed: ["bad", "Failed"], discovered: null }[c.status];
-  const done = !(c.status in { queued: 1, failed: 1, discovered: 1 });
-  return h("div", { className: "tile", on: { click: () => openViewer(c) } },
-    h("div", { className: "thumb" },
-      c.thumbnail ? h("img", { src: c.thumbnail, alt: "", loading: "lazy" }) : null,
-      flag ? h("span", { className: "flag " + flag[0] }, flag[1]) : done ? h("span", { className: "flag" }, "Edited") : null,
-      c.status === "discovered" ? h("button", { className: "x", title: "Remove", "aria-label": "Remove",
-        on: { click: e => { e.stopPropagation(); browseAct(c, "skip"); } } }, "✕") : null,
-      c.duration ? h("span", { className: "length" }, mmss(c.duration)) : null),
-    h("div", { className: "info" },
-      h("div", { className: "t" }, c.title || "(untitled)"),
-      h("div", { className: "m" }, c.streamer),
-      h("div", { className: "m" }, `${compact(c.views)} views · ${ago(c.created_at)}`)));
-}
 const compact = n => (n || 0) >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : (n || 0) >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, "") + "K" : String(n || 0);
+const ICONS = {
+  feed: "M8 5v14l11-7z",
+  clips: "M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z",
+  streamers: "M16 11a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm-8 0a3 3 0 1 0-3-3 3 3 0 0 0 3 3zm0 2c-2.3 0-7 1.2-7 3.5V19h7v-2.5c0-.9.4-2.2 2.2-3.2A12 12 0 0 0 8 13zm8 0c-2.7 0-8 1.3-8 4v2h16v-2c0-2.7-5.3-4-8-4z",
+  accounts: "M10.6 13.4a1 1 0 0 1 0-1.4l3.4-3.4a1 1 0 1 1 1.4 1.4L12 13.4a1 1 0 0 1-1.4 0zM8.5 19.5a4.5 4.5 0 0 1-3.2-7.7l2.8-2.8 1.4 1.4-2.8 2.8a2.5 2.5 0 0 0 3.5 3.5l2.8-2.8 1.4 1.4-2.8 2.8a4.5 4.5 0 0 1-3.1 1.4zm7.4-4.5-1.4-1.4 2.8-2.8a2.5 2.5 0 1 0-3.5-3.5L11 10.1 9.6 8.7l2.8-2.8a4.5 4.5 0 0 1 6.4 6.4z",
+  settings: "M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.4-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3.3h-4l-.4 2.7a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.4 2.5-1a7.4 7.4 0 0 0 1.7 1l.4 2.7h4l.4-2.7a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.4zM13 15.5A3.5 3.5 0 1 1 16.5 12 3.5 3.5 0 0 1 13 15.5z",
+  save: "M17 3H7a2 2 0 0 0-2 2v16l7-3 7 3V5a2 2 0 0 0-2-2z",
+  saved: "M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z",
+  less: "M12 4C7 4 2.7 7.1 1 12a11.8 11.8 0 0 0 4.2 5.4L3 19.6 4.4 21 21 4.4 19.6 3l-2.4 2.4A11.2 11.2 0 0 0 12 4zm0 3a5 5 0 0 1 3 1l-1.5 1.5A3 3 0 0 0 9.5 13.5L8 15a5 5 0 0 1 4-8zm10.9 5a11.8 11.8 0 0 1-9.6 7.9l2.2-2.2a5 5 0 0 0 3.2-3.2l2.9-2.9a11.6 11.6 0 0 1 1.3.4z",
+  open: "M14 3v2h3.6l-9.8 9.8 1.4 1.4L19 6.4V10h2V3zm5 16H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7h-2z",
+};
+const svgNS = "http://www.w3.org/2000/svg";
+function icon(name) {
+  const svg = document.createElementNS(svgNS, "svg"), path = document.createElementNS(svgNS, "path");
+  svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("fill", "currentColor"); path.setAttribute("d", ICONS[name]);
+  svg.append(path);
+  return svg;
+}
+function toast(text) {
+  const t = h("div", { className: "toast" }, text);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 2200);
+}
 
-function openViewer(c) {
-  const d = $("viewer");
-  const close = () => { d.close(); d.replaceChildren(); };   // emptying it stops the video
-  const act = async action => { if (await browseAct(c, action)) close(); };
-  const actions = {
-    discovered: [h("button", { className: "primary", on: { click: () => act("edit") } }, "Edit this clip"),
-                 h("button", { on: { click: () => act("skip") } }, "Remove")],
-    queued: h("span", { className: "badge" }, "Being edited…"),
-    failed: [h("span", { className: "badge failed" }, "Failed"), h("button", { className: "primary", on: { click: () => act("edit") } }, "Try again")],
-  }[c.status] || h("span", { className: "badge approved" }, "Edited - see the Edited tab");
-  d.replaceChildren(h("div", { style: "display:flex;flex-direction:column;gap:10px" },
-    h("div", { className: "player" }, c.preview ? playerFor(c)
-      : [c.thumbnail ? h("img", { src: c.thumbnail, alt: "" }) : null,
-         h("a", { href: c.url, target: "_blank", rel: "noopener", className: "play" }, "Watch on " + c.platform)]),
-    h("div", { className: "title" }, c.title || "(untitled)"),
-    h("div", { className: "muted" }, [c.streamer, c.platform, `${(c.views || 0).toLocaleString()} views`, ago(c.created_at)].filter(Boolean).join(" · ")),
-    c.uploader ? h("div", { className: "muted" }, "Posted by " + c.uploader) : null,
-    h("div", { className: "row" }, h("span", { className: "badge" }, c.category), h("span", { style: "flex:1" }), actions),
-    h("div", { className: "row" }, h("a", { href: c.url, target: "_blank", rel: "noopener", className: "muted" }, "Open original"),
-      h("span", { style: "flex:1" }), h("button", { on: { click: close } }, "Close"))));
-  d.onclose = () => d.replaceChildren();
+let hlsLoading = null;
+function playerFor(c) {
+  if (c.platform === "kick") {
+    const v = h("video", { controls: true, autoplay: true, muted: true, playsInline: true, loop: true });
+    const src = c.preview;
+    if (!src.includes(".m3u8") || v.canPlayType("application/vnd.apple.mpegurl")) v.src = src;
+    else {  // phones other than iPhone need a small helper library for Kick's streaming format
+      hlsLoading = hlsLoading || new Promise((ok, fail) => document.head.append(h("script", {
+        src: "https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js", onload: ok, onerror: fail })));
+      hlsLoading.then(() => { const hls = new window.Hls(); hls.loadSource(src); hls.attachMedia(v); }).catch(() => {});
+    }
+    return v;
+  }
+  const url = c.platform === "twitch" ? `${c.preview}&parent=${location.hostname}&autoplay=true&muted=true`
+    : c.preview + (c.preview.includes("?") ? "&" : "?") + "autoplay=1&mute=1&playsinline=1";
+  return h("iframe", { src: url, allow: "autoplay; fullscreen; encrypted-media; picture-in-picture", allowFullscreen: true });
+}
+
+function updateFeedbar() {
+  const bar = $("feedbar");
+  if (!bar) return;
+  bar.querySelector(".find").textContent = S && S.job ? S.job + "…" : "Find clips";
+  bar.querySelector(".find").disabled = !!(S && S.job);
+}
+
+function feedNews() {
+  if (document.querySelector(".feedbar .news")) return;
+  const pill = h("button", { className: "pill set news", on: { click: () => { pill.remove(); loadFeed(true); } } }, "New clips ↻");
+  $("feedbar").querySelector(".logo").after(pill);
+}
+
+async function loadFeed(reset) {
+  if (feed.loading) return;
+  feed.loading = true;
+  if (reset) { feed.clips = []; feed.active = null; buildFeed(); }
+  const q = new URLSearchParams({ game: feed.game, creator: feed.creator, offset: feed.clips.length, limit: 10 });
+  const data = await (await fetch("/api/feed?" + q)).json().catch(() => ({ clips: [], total: 0 }));
+  const fresh = (data.clips || []).filter(c => !feed.clips.some(x => x.id === c.id));
+  feed.clips.push(...fresh); feed.total = data.total || 0; feed.loaded = true; feed.loading = false;
+  const box = $("feed");
+  box.querySelector(".reel.empty")?.remove();
+  for (const c of fresh) box.append(reel(c));
+  if (!feed.clips.length) box.append(emptyReel());
+}
+
+function buildFeed() {
+  const box = $("feed");
+  const filterLabel = (feed.game || "Game");
+  box.replaceChildren(h("div", { className: "feedbar", id: "feedbar" },
+    h("span", { className: "logo" }, "Clipz"),
+    h("button", { className: "pill" + (feed.game ? " set" : ""), on: { click: () => openFilter("game") } }, filterLabel + " ▾"),
+    h("button", { className: "pill" + (feed.creator ? " set" : ""), on: { click: () => openFilter("creator") } }, (feed.creatorName || "Creator") + " ▾"),
+    h("button", { className: "pill find", on: { click: () => api("POST", "/api/run").then(() => toast("Looking for new clips…")) } }, "Find clips")));
+  updateFeedbar();
+  feed.observer?.disconnect();
+  feed.observer = new IntersectionObserver(entries => {
+    for (const e of entries) if (e.isIntersecting) activate(e.target);
+  }, { root: box, threshold: 0.6 });
+}
+
+function emptyReel() {
+  const filtered = feed.game || feed.creator;
+  return h("div", { className: "reel empty" },
+    h("div", { style: "font-size:40px" }, "✓"),
+    h("div", { style: "color:#fff;font-weight:700;font-size:18px" }, filtered ? "Nothing here for this filter" : "You're all caught up"),
+    h("div", {}, !S.creators.length && !(S.games || []).length ? "Follow streamers or games on the Following tab, then tap Find clips."
+      : filtered ? "Try another game or creator, or clear the filter." : "Tap Find clips to look for more."),
+    filtered ? h("button", { on: { click: () => { feed.game = feed.creator = feed.creatorName = ""; loadFeed(true); } } }, "Clear filter")
+      : h("button", { className: "primary", on: { click: () => api("POST", "/api/run").then(() => toast("Looking for new clips…")) } }, "Find clips"));
+}
+
+function reel(c) {
+  const stage = h("div", { className: "stage" }, c.thumbnail ? h("img", { src: c.thumbnail, alt: "", loading: "lazy" }) : null);
+  const el = h("div", { className: "reel" },
+    h("div", { className: "bg", style: c.thumbnail ? `background-image:url("${encodeURI(c.thumbnail)}")` : "" }),
+    stage,
+    h("div", { className: "meta" },
+      h("div", { className: "who" }, c.streamer, h("span", { className: "plat " + c.platform }, c.platform)),
+      h("div", { className: "title" }, c.title || ""),
+      h("div", { className: "sub" }, [c.game, `${compact(c.views)} views`, ago(c.created_at), c.uploader ? "clip by " + c.uploader : ""].filter(Boolean).join(" · "))),
+    h("div", { className: "actions" },
+      h("button", { className: "act save", on: { click: () => saveClip(c, el) } }, h("span", { className: "ic" }, icon("save")), "Save to publishing"),
+      h("button", { className: "act", on: { click: () => lessLikeThis(c, el) } }, h("span", { className: "ic" }, icon("less")), "Don't show more like this"),
+      h("a", { className: "act", href: c.url, target: "_blank", rel: "noopener" }, h("span", { className: "ic" }, icon("open")), "Original")));
+  el._clip = c; el._stage = stage;
+  feed.observer.observe(el);
+  return el;
+}
+
+function activate(el) {
+  if (feed.active === el) return;
+  if (feed.active) {  // stop the previous one by putting its picture back
+    const prev = feed.active;
+    prev._stage.replaceChildren(prev._clip.thumbnail ? h("img", { src: prev._clip.thumbnail, alt: "" }) : "");
+  }
+  feed.active = el;
+  const c = el._clip;
+  if (c.preview) el._stage.replaceChildren(playerFor(c));
+  if (!feed.seen.has(c.id)) { feed.seen.add(c.id); markSeen(c.id); }
+  const reels = [...$("feed").querySelectorAll(".reel:not(.empty)")];
+  if (reels.indexOf(el) >= reels.length - 3 && feed.clips.length < feed.total) loadFeed(false);
+}
+
+let seenQueue = [], seenTimer = null;
+function markSeen(id) {
+  seenQueue.push(id);
+  clearTimeout(seenTimer);
+  seenTimer = setTimeout(() => {
+    const ids = seenQueue.splice(0);
+    fetch("/api/clips/seen", { method: "POST", headers: { "Content-Type": "application/json", "X-Clipz": "1" }, body: JSON.stringify({ ids }) });
+  }, 1500);
+}
+
+function next(el) {
+  const box = $("feed");
+  box.scrollTo({ top: el.offsetTop + el.offsetHeight, behavior: "smooth" });
+}
+
+function dropReels(match, from) {
+  const box = $("feed"), reels = [...box.querySelectorAll(".reel:not(.empty)")];
+  const nextEl = reels.slice(reels.indexOf(from) + 1).find(r => !match(r._clip));
+  for (const r of reels) if (match(r._clip)) { feed.observer.unobserve(r); if (feed.active === r) feed.active = null; r.remove(); }
+  feed.clips = feed.clips.filter(c => !match(c));
+  feed.total -= reels.length - box.querySelectorAll(".reel:not(.empty)").length;
+  if (nextEl) { box.scrollTo({ top: nextEl.offsetTop }); activate(nextEl); }
+  else if (!feed.clips.length) box.append(emptyReel());
+}
+
+async function saveClip(c, el) {
+  const r = await fetch(`/api/clips/${encodeURIComponent(c.id)}/save`, { method: "POST", headers: { "Content-Type": "application/json", "X-Clipz": "1" }, body: "{}" });
+  if (!r.ok) return toast((await r.json().catch(() => ({}))).error || "Couldn't save that clip");
+  const btn = el.querySelector(".act.save");
+  btn.classList.add("done"); btn.querySelector(".ic").replaceChildren(icon("saved"));
+  toast("Saved - editing it for publishing");
+  setTimeout(() => dropReels(x => x.id === c.id, el), 650);
+}
+
+function lessLikeThis(c, el) {
+  const d = $("sheet");
+  const choose = async (body, match, msg) => {
+    d.close();
+    const r = body ? await fetch("/api/mute", { method: "POST", headers: { "Content-Type": "application/json", "X-Clipz": "1" }, body: JSON.stringify(body) })
+                   : await fetch(`/api/clips/${encodeURIComponent(c.id)}/skip`, { method: "POST", headers: { "Content-Type": "application/json", "X-Clipz": "1" }, body: "{}" });
+    if (!r.ok) return toast("Something went wrong");
+    toast(msg);
+    dropReels(match, el);
+  };
+  d.replaceChildren(
+    h("h3", {}, "Don't show more like this"),
+    h("button", { on: { click: () => choose(null, x => x.id === c.id, "Hidden") } }, "Hide this clip"),
+    h("button", { on: { click: () => choose({ kind: "creator", value: c.key, label: c.streamer }, x => x.key === c.key, `You won't see ${c.streamer} in the feed`) } },
+      `Hide all clips from ${c.streamer}`),
+    c.game ? h("button", { on: { click: () => choose({ kind: "game", value: c.game }, x => (x.game || "").toLowerCase() === c.game.toLowerCase(), `You won't see ${c.game} in the feed`) } },
+      `Hide all ${c.game} clips`) : null,
+    h("button", { on: { click: () => d.close() } }, "Cancel"));
   d.showModal();
 }
 
-function renderBrowse() {
-  const cats = ["", ...(S.categories || [])];
-  const chips = h("div", { className: "chips" }, cats.map(cat =>
-    h("button", { className: cat === browse.category ? "on" : "", on: { click: () => { browse.category = cat; loadBrowse(true); } } }, cat || "All")));
-  const sentinel = h("div", { style: "height:1px" });
-  const feed = h("div", {}, h("div", { className: "grid3" }, browse.clips.map(tile)), sentinel);
-  const last = (S.log || []).at(-1);
-  const status = !S.job && last && Date.now() / 1000 - last[0] < 900 ? last[1].trim() : "";   // e.g. "12 new clip(s) found"
-  const empty = !S.creators.length ? "Add streamers on the Streamers tab, then press \"Find new clips\"."
-    : S.job ? "Looking for clips…" : "Nothing found yet. Press \"Find new clips\" to look.";
-  $("browse").replaceChildren(chips,
-    h("div", { className: "row muted", style: "margin-bottom:10px" }, `${browse.total} clip${browse.total === 1 ? "" : "s"} found`,
-      h("span", { style: "flex:1" }), h("button", { on: { click: () => loadBrowse(true) } }, "Refresh")),
-    status ? h("div", { className: "muted", style: "font-size:13px;margin:-4px 0 10px;overflow-wrap:anywhere" }, status) : null,
-    browse.clips.length ? feed : h("p", { className: "muted" }, empty));
-  if (browse.clips.length < browse.total) {
-    new IntersectionObserver((entries, obs) => { if (entries[0].isIntersecting) { obs.disconnect(); loadBrowse(false); } })
-      .observe(sentinel);
-  }
+async function openFilter(kind) {
+  const d = $("sheet");
+  d.replaceChildren(h("h3", {}, "Loading…"));
+  d.showModal();
+  const data = await (await fetch("/api/feed/filters")).json().catch(() => ({ games: [], creators: [] }));
+  const pick = (value, name) => {
+    d.close();
+    if (kind === "game") feed.game = value; else { feed.creator = value; feed.creatorName = name; }
+    loadFeed(true);
+  };
+  const items = kind === "game"
+    ? data.games.map(g => h("button", { on: { click: () => pick(g.name) } }, `${g.name}${g.count ? "  ·  " + g.count : ""}`))
+    : data.creators.map(c => h("button", { on: { click: () => pick(c.key, c.name) } },
+        h("span", { className: "plat " + c.platform, style: "margin-right:8px" }, c.platform), `${c.name}${c.count ? "  ·  " + c.count : ""}`));
+  d.replaceChildren(
+    h("h3", {}, kind === "game" ? "Show clips from game" : "Show clips from creator"),
+    h("button", { on: { click: () => pick("", "") } }, kind === "game" ? "All games" : "All creators"),
+    h("div", { style: "max-height:55vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px" },
+      items.length ? items : h("div", { className: "muted" }, "Nothing to filter by yet - follow streamers or games and find clips first.")),
+    h("button", { on: { click: () => d.close() } }, "Cancel"));
 }
 
 function renderTabs() {
   $("tabs").replaceChildren(...Object.entries(TABS).map(([id, name]) =>
-    h("button", { className: id === tab ? "on" : "", on: { click: () => { tab = id; location.hash = id; dirty = false; show(); } } }, name)));
+    h("button", { className: id === tab ? "on" : "", on: { click: () => { tab = id; location.hash = id; dirty = false; show(); } } },
+      icon(id), name)));
 }
 function show() {
   for (const id of Object.keys(TABS)) $(id).classList.toggle("hidden", id !== tab);
+  document.body.classList.toggle("on-feed", tab === "feed");
+  if (tab !== "feed" && feed.active) {  // leaving the feed: stop the video
+    feed.active._stage.replaceChildren(feed.active._clip.thumbnail ? h("img", { src: feed.active._clip.thumbnail, alt: "" }) : "");
+    feed.active = null;
+  } else if (tab === "feed" && feed.loaded) {
+    const box = $("feed"), mid = box.scrollTop + box.clientHeight / 2;
+    const current = [...box.querySelectorAll(".reel:not(.empty)")].find(r => r.offsetTop <= mid && r.offsetTop + r.offsetHeight > mid);
+    if (current) activate(current);
+  }
   refresh();
 }
 
@@ -473,6 +623,14 @@ function renderStreamers() {
   const add = () => { try { localStorage.setItem("clipz-cat", category.value.trim()); } catch {}
     return api("POST", "/api/creators", { platform: platform.value, channel: channel.value, category: category.value, name: pickedName,
     all_content: what.value === "all", hashtags: tags.value.split(",").map(s => s.trim()).filter(Boolean) }); };
+  const muted = S.muted || {}, labels = muted.labels || {};
+  const hiddenRows = [...(muted.creators || []).map(v => ["creator", v]), ...(muted.games || []).map(v => ["game", v])];
+  const hiddenPanel = hiddenRows.length ? h("div", { className: "panel" },
+    h("h2", {}, "Hidden from your feed"),
+    h("p", { className: "muted" }, "Things you chose \"Don't show more like this\" for."),
+    h("ul", { className: "list" }, hiddenRows.map(([kind, v]) => h("li", {},
+      h("span", {}, labels[v] || v), h("span", { className: "badge" }, kind === "creator" ? v.split(":")[0] : "game"),
+      h("button", { on: { click: () => api("DELETE", "/api/mute", { kind, value: v }) } }, "Unhide"))))) : null;
   $("streamers").replaceChildren(gamesPanel(), h("div", { className: "panel" },
     h("h2", {}, "Streamers to clip"),
     h("p", { className: "muted" }, "Clipz only looks at channels on this list. Stick to creators who run a clipping program or have said it's OK - posting footage without permission gets channels struck."),
@@ -488,7 +646,7 @@ function renderStreamers() {
             c.all_content ? "All clips" : game + " only") : h("span", { className: "badge" }, "All clips"),
           h("span", { className: "badge" }, c.platform),
           h("button", { className: "ghost-bad", on: { click: () => api("DELETE", "/api/creators", c) } }, "Remove"))))])
-      : h("p", { className: "muted", style: "margin-top:14px" }, "No streamers yet.")));
+      : h("p", { className: "muted", style: "margin-top:14px" }, "No streamers yet.")), hiddenPanel);
 }
 
 // ---- Games & categories: follow a game, get the most-viewed clips from everyone playing it ----

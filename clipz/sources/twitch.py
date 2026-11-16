@@ -80,13 +80,25 @@ def _window(cfg: Config) -> tuple[datetime, str, str]:
     return now, (now - timedelta(hours=cfg.lookback_hours)).strftime(fmt), now.strftime(fmt)
 
 
-def _clip(d: dict, creator: str, credit: str, now, category: str = "") -> Clip:
+def _game_names(s, cfg: Config, clips: list[dict]) -> dict:
+    """game_id -> what to call it: your label for a followed game, else Twitch's name."""
+    names = {g["twitch_id"]: g.get("label") or g["name"] for g in cfg.games if g.get("twitch_id")}
+    missing = sorted({d["game_id"] for d in clips if d.get("game_id") and d["game_id"] not in names})
+    for i in range(0, len(missing), 100):
+        try:
+            names.update({g["id"]: g["name"] for g in _get(s, "games", id=missing[i:i + 100])})
+        except Exception:
+            break
+    return names
+
+
+def _clip(d: dict, creator: str, credit: str, now, category: str = "", game: str = "") -> Clip:
     return Clip(
         id=f"twitch:{d['id']}", platform="twitch", creator=creator, credit=credit,
         title=d["title"], url=d["url"], views=d["view_count"], created_at=d["created_at"],
         duration=d["duration"], score=velocity(d["view_count"], d["created_at"], now),
         thumbnail=d.get("thumbnail_url", ""), preview=f"https://clips.twitch.tv/embed?clip={d['id']}",
-        uploader=d.get("creator_name", ""), category=category,
+        uploader=d.get("creator_name", ""), category=category, game=game,
     )
 
 
@@ -103,7 +115,7 @@ def discover(cfg: Config, creators: list[Creator]) -> list[Clip]:
     users = _get(s, "users", login=[c.channel.lower() for c in creators])
     ids = {u["login"]: u["id"] for u in users}
     now, started, ended = _window(cfg)
-    out = []
+    found = []
     for c in creators:
         uid = ids.get(c.channel.lower())
         if not uid:
@@ -114,8 +126,9 @@ def discover(cfg: Config, creators: list[Creator]) -> list[Clip]:
             if game_id and not c.all_content and d["game_id"] != game_id:
                 continue
             if d["view_count"] >= cfg.min_views:
-                out.append(_clip(d, c.channel, c.credit, now))
-    return out
+                found.append((d, c))
+    names = _game_names(s, cfg, [d for d, _ in found])
+    return [_clip(d, c.channel, c.credit, now, game=names.get(d.get("game_id"), "")) for d, c in found]
 
 
 def discover_games(cfg: Config, games: list[dict]) -> list[Clip]:
@@ -129,5 +142,6 @@ def discover_games(cfg: Config, games: list[dict]) -> list[Clip]:
         for d in _get(s, "clips", game_id=g["twitch_id"], started_at=started, ended_at=ended, first=100):
             if d["view_count"] >= cfg.min_views:
                 name = d.get("broadcaster_name", "")
-                out.append(_clip(d, name, f"twitch.tv/{name.lower()}", now, g.get("label") or g["name"]))
+                label = g.get("label") or g["name"]
+                out.append(_clip(d, name, f"twitch.tv/{name.lower()}", now, label, label))
     return out

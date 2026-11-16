@@ -49,6 +49,9 @@ class Clip:
     preview: str = ""       # what Browse plays: an embeddable page, or a video file URL
     uploader: str = ""      # who posted it, when that isn't the streamer (another clipper)
     category: str = ""      # set for clips found through a followed game
+    game: str = ""          # the game/category being played, when the platform says
+    approve: str = ""       # "1" = saved to publishing: approve as soon as it's edited
+    seen: str = ""          # "1" once it has been shown in the feed
 
 
 COLUMNS = list(Clip.__dataclass_fields__)
@@ -121,7 +124,7 @@ def credit_line(clip: Clip) -> str:
 def _clip(row) -> Clip:
     data = dict(row)
     for c in ("src_path", "out_path", "published_url", "error", "layout", "background",
-              "thumbnail", "preview", "uploader", "category"):
+              "thumbnail", "preview", "uploader", "category", "game", "approve", "seen"):
         data[c] = data.get(c) or ""
     return Clip(**{c: data[c] for c in COLUMNS})
 

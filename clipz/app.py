@@ -82,11 +82,12 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
 
     def say(msg: str) -> None:
         db.log_append(cfg().connect(), msg)
+        print(msg, flush=True)  # also into the host's logs, for troubleshooting
 
     def run_local_worker() -> None:
         c = config.load(config_path)  # a thread needs its own connection
         try:
-            worker.run(c, lambda m: db.log_append(c.connect(), m))
+            worker.run(c, lambda m: (db.log_append(c.connect(), m), print(m, flush=True)))
         except Exception as e:
             db.log_append(c.connect(), f"Background work FAILED: {e}")
         finally:
@@ -211,7 +212,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         return jsonify(
             creators=[asdict(x) for x in c.creators], clips=clips,
             categories=sorted({x.category for x in c.creators} | {g.get("label") or g["name"] for g in c.games}),
-            games=c.games,
+            games=c.games, muted=c.muted or {},
             waiting=len(db.by_status(con, "discovered")),
             settings=settings,
             accounts={**{n: m.connected(c) for n, m in publish.PLATFORMS.items()},
@@ -268,8 +269,11 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             return jsonify(error="Pick a game from the list."), 400
         if any(g["name"].lower() == name.lower() for g in c.games):
             return jsonify(error="You're already following that game."), 400
+        kick_matches = kick_source.search_categories(name)
+        kick_slug = next((k["slug"] for k in kick_matches if k["name"].lower() == name.lower()),
+                         kick_matches[0]["slug"] if kick_matches else kick_source.slugify(name))
         game = {"name": name, "twitch_id": str(body.get("id") or ""), "image": body.get("image") or "",
-                "label": (body.get("label") or "").strip() or name}
+                "label": (body.get("label") or "").strip() or name, "kick_slug": kick_slug}
         config.save_settings(c, {"games": [*c.games, game]})
         say(f"Following {game['label']}. Press Find new clips to get its top clips.")
         return jsonify(ok=True)
@@ -291,25 +295,98 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         config.save_settings(c, {"creators": creators})
         return jsonify(ok=True)
 
-    @app.get("/api/browse")
-    def browse():
-        """Everything found, best first, for the Browse screen. ?category= narrows it down."""
-        c = cfg()
-        con = c.connect()
-        want = request.args.get("category", "")
-        offset, limit = int(request.args.get("offset", 0)), min(int(request.args.get("limit", 20)), 50)
-        show = ("discovered", "queued", "rendered", "approved", "published", "failed")
+    def creator_key(clip) -> str:
+        return f"{clip.platform}:{clip.creator.lower()}"
+
+    def feed_items(c, con):
+        """New finds for the feed: not yet saved or hidden, not muted. Unseen first, then best first."""
+        muted = c.muted or {}
+        hidden_creators = set(muted.get("creators", []))
+        hidden_games = {g.lower() for g in muted.get("games", [])}
         items = []
-        for clip in db.all_clips(con):
-            if clip.status not in show:
+        for clip in db.by_status(con, "discovered"):
+            game = clip.game or (clip.category if clip.category != "General" else "")
+            if creator_key(clip) in hidden_creators or (game and game.lower() in hidden_games):
                 continue
             creator = c.creator_for(clip)
-            category = c.category_of(clip)
-            if want and category != want:
-                continue
-            items.append({**asdict(clip), "category": category,
+            items.append({**asdict(clip), "category": c.category_of(clip), "game": game, "key": creator_key(clip),
                           "streamer": (creator.name or creator.channel) if creator else clip.creator})
+        items.sort(key=lambda x: (x["seen"] == "1", -x["score"]))
+        return items
+
+    @app.get("/api/feed")
+    @app.get("/api/browse")
+    def feed():
+        """The swipe feed. ?game= and ?creator= (platform:name) narrow it down; ?category= too."""
+        c = cfg()
+        con = c.connect()
+        game, creator, category = (request.args.get(k, "") for k in ("game", "creator", "category"))
+        offset, limit = int(request.args.get("offset", 0)), min(int(request.args.get("limit", 20)), 50)
+        items = [x for x in feed_items(c, con)
+                 if (not game or x["game"].lower() == game.lower())
+                 and (not creator or x["key"] == creator.lower())
+                 and (not category or x["category"] == category)]
         return jsonify(clips=items[offset:offset + limit], total=len(items))
+
+    @app.get("/api/feed/filters")
+    def feed_filters():
+        """What the feed can be narrowed to: games and creators that have clips waiting."""
+        c = cfg()
+        items = feed_items(c, c.connect())
+        games, creators = {}, {}
+        for x in items:
+            if x["game"]:
+                games[x["game"]] = games.get(x["game"], 0) + 1
+            entry = creators.setdefault(x["key"], {"key": x["key"], "name": x["streamer"], "platform": x["platform"], "count": 0})
+            entry["count"] += 1
+        muted = c.muted or {}
+        hidden_games = {x.lower() for x in muted.get("games", [])}
+        for followed in c.games:
+            label = followed.get("label") or followed["name"]
+            if label.lower() not in hidden_games:
+                games.setdefault(label, 0)
+        for cr in c.creators:
+            key = f"{cr.platform}:{cr.channel.lower()}"
+            if key not in muted.get("creators", []):
+                creators.setdefault(key, {"key": key, "name": cr.name or cr.channel, "platform": cr.platform, "count": 0})
+        return jsonify(
+            games=[{"name": n, "count": k} for n, k in sorted(games.items(), key=lambda kv: (-kv[1], kv[0].lower()))],
+            creators=sorted(creators.values(), key=lambda x: (-x["count"], x["name"].lower()))[:60])
+
+    @app.post("/api/clips/seen")
+    def mark_seen():
+        con = cfg().connect()
+        for clip_id in (request.get_json().get("ids") or [])[:50]:
+            try:
+                db.update(con, clip_id, seen="1")
+            except KeyError:
+                pass
+        return jsonify(ok=True)
+
+    @app.post("/api/mute")
+    def mute():
+        """Don't show more like this: hide a creator's or a game's clips from the feed."""
+        body, c = request.get_json(), cfg()
+        kind, value = body.get("kind"), (body.get("value") or "").strip()
+        if kind not in ("creator", "game") or not value:
+            return jsonify(error="Nothing to hide."), 400
+        muted = dict(c.muted or {})
+        key = kind + "s"
+        muted[key] = sorted(set(muted.get(key, [])) | {value.lower() if kind == "creator" else value})
+        labels = dict(muted.get("labels", {}))
+        labels[value.lower() if kind == "creator" else value] = body.get("label") or value
+        muted["labels"] = labels
+        config.save_settings(c, {"muted": muted})
+        return jsonify(ok=True)
+
+    @app.delete("/api/mute")
+    def unmute():
+        body, c = request.get_json(), cfg()
+        muted = dict(c.muted or {})
+        key, value = (body.get("kind") or "") + "s", body.get("value") or ""
+        muted[key] = [v for v in muted.get(key, []) if v != value]
+        config.save_settings(c, {"muted": muted})
+        return jsonify(ok=True)
 
     @app.delete("/api/creators")
     def remove_creator():
@@ -425,7 +502,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
     @app.post("/api/clips/<path:clip_id>/<action>")
     def set_status(clip_id, action):
         moves = {"approve": (("rendered", "rejected"), "approved"), "reject": (("rendered", "approved"), "rejected"),
-                 "edit": (("discovered", "skipped", "failed"), "queued"), "skip": (("discovered",), "skipped")}
+                 "edit": (("discovered", "skipped", "failed"), "queued"), "skip": (("discovered",), "skipped"),
+                 "save": (("discovered", "skipped", "failed"), "queued")}   # save to publishing
         if action not in moves:
             abort(404)
         con = cfg().connect()
@@ -435,7 +513,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         allowed, to = moves[action]
         if clip.status not in allowed:
             return jsonify(error=f"clip is already {clip.status}"), 400
-        db.update(con, clip_id, status=to)
+        db.update(con, clip_id, status=to, **({"approve": "1"} if action == "save" else {}))
         if to == "queued":
             start_worker()
         return jsonify(ok=True)

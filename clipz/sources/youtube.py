@@ -167,7 +167,9 @@ def discover_games(cfg: Config, games: list[dict]) -> list[Clip]:
             uploader = e.get("channel") or e.get("uploader") or ""
             handle = e.get("uploader_id") or ""
             credit = f"youtube.com/{handle}" if handle.startswith("@") else (e.get("channel_url") or "YouTube")
-            out.append(_as_clip(cfg, e, uploader, credit, now, "", label))
+            clip = _as_clip(cfg, e, uploader, credit, now, "", label)
+            clip.game = label
+            out.append(clip)
     return out
 
 
