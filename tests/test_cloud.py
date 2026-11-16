@@ -627,3 +627,17 @@ def test_youtube_shorts_without_length_or_views_are_kept(cfg, monkeypatch):
     cfg.min_views, cfg.games = 50, [{"name": "Fortnite", "label": "Fortnite"}]
     clips = youtube.discover_games(cfg, cfg.games)
     assert [c.id for c in clips] == ["youtube:s1"] and clips[0].duration == 60
+
+
+def test_clip_actions_work_when_the_host_passes_the_path_still_encoded(cloud_app, monkeypatch):
+    """Vercel gives the app "/api/clips/twitch%3Aa/..." without decoding it."""
+    client, _, base = cloud_app
+    from clipz import download
+    monkeypatch.setattr(download, "stream_url", lambda url, max_height=720: "https://cdn/a.mp4")
+    con = config.load("config.toml").connect()
+    db.add(con, clip("a"))
+    raw = lambda method, path: getattr(client, method)(path, data="{}", content_type="application/json", headers={"X-Clipz": "1"},
+                                                      environ_overrides={"PATH_INFO": path}, **base)
+    assert raw("get", "/api/clips/twitch%3Aa/stream").get_json()["url"] == "https://cdn/a.mp4"
+    assert raw("post", "/api/clips/twitch%3Aa/skip").status_code == 200
+    assert db.get(con, "twitch:a").status == "skipped"

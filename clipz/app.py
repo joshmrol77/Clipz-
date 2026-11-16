@@ -20,11 +20,12 @@ import zlib
 from dataclasses import asdict
 from datetime import timedelta
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import requests
 from flask import Flask, abort, g, jsonify, redirect, request, send_file, session
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.routing import PathConverter
 from werkzeug.utils import secure_filename
 
 from . import config, db, download, files, pipeline, publish, render, worker
@@ -49,12 +50,20 @@ border-color:#7c5cff;font-weight:600}p{color:#e5484d;margin:0}</style>
 
 
 
+class ClipIdConverter(PathConverter):
+    """Clip ids contain ":" (e.g. "twitch:AbC"), which the page sends as "%3A". Vercel hands
+    the path over still encoded, so decode it here or no clip would ever be found."""
+    def to_python(self, value: str) -> str:
+        return unquote(value)
+
+
 def create_app(config_path: str = "config.toml", port: int = 8777, password: str = "",
                cloud: bool | None = None, wake=None) -> Flask:
     """cloud: run background work as worker requests (Vercel). wake: override how a worker is
     started (tests)."""
     cloud = bool(os.environ.get("VERCEL")) if cloud is None else cloud
     app = Flask(__name__, static_folder=None)
+    app.url_map.converters["clip"] = ClipIdConverter
     if password or cloud:
         # Behind the host's HTTPS proxy. The session key is derived from the password so every
         # cloud instance agrees on it, and changing the password signs everyone out.
@@ -361,7 +370,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             games=[{"name": n, "count": k} for n, k in sorted(games.items(), key=lambda kv: (-kv[1], kv[0].lower()))],
             creators=sorted(creators.values(), key=lambda x: (-x["count"], x["name"].lower()))[:60])
 
-    @app.get("/api/clips/<path:clip_id>/stream")
+    @app.get("/api/clips/<clip:clip_id>/stream")
     def clip_stream(clip_id):
         """A direct video address the feed can autoplay in its own player. Twitch's embedded
         player won't start by itself on phones; a plain muted <video> will."""
@@ -486,7 +495,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             fields["title"] = body["title"].strip()[:200]
         return fields, None
 
-    @app.post("/api/clips/<path:clip_id>/post")
+    @app.post("/api/clips/<clip:clip_id>/post")
     def post_clip(clip_id):
         """Post this clip: edit it in the chosen format if needed, then post to every connected account."""
         body, c = request.get_json(), cfg()
@@ -508,7 +517,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         start_worker()
         return jsonify(ok=True, accounts=publish.connected(c))
 
-    @app.post("/api/clips/<path:clip_id>/keep")
+    @app.post("/api/clips/<clip:clip_id>/keep")
     def keep_clip(clip_id):
         """Save for later: edit it in the chosen format and leave it in Publishing to post later."""
         body, c = request.get_json(), cfg()
@@ -523,7 +532,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         start_worker()
         return jsonify(ok=True)
 
-    @app.post("/api/clips/<path:clip_id>/layout")
+    @app.post("/api/clips/<clip:clip_id>/layout")
     def set_layout(clip_id):
         """Change a clip's layout / gameplay video / headline and re-edit it."""
         body = request.get_json()
@@ -580,7 +589,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         say(f"Added gameplay video {name}")
         return jsonify(ok=True, name=name)
 
-    @app.post("/api/clips/<path:clip_id>/<action>")
+    @app.post("/api/clips/<clip:clip_id>/<action>")
     def set_status(clip_id, action):
         moves = {"approve": (("rendered", "rejected"), "approved"), "reject": (("rendered", "approved"), "rejected"),
                  "edit": (("discovered", "skipped", "failed"), "queued"), "skip": (("discovered",), "skipped"),
@@ -599,7 +608,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             start_worker()
         return jsonify(ok=True)
 
-    @app.get("/media/<path:clip_id>")
+    @app.get("/media/<clip:clip_id>")
     def media(clip_id):
         clip = db.get(cfg().connect(), clip_id)
         if not clip or not clip.out_path:
