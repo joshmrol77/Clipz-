@@ -176,7 +176,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
 
     @app.get("/")
     def index():
-        return send_file(STATIC / "index.html")
+        return send_file(STATIC / "index.html", max_age=0)  # always the latest version after an update
 
     def media_url(clip: db.Clip) -> str:
         if files.is_url(clip.out_path):
