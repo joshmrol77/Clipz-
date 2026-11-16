@@ -54,11 +54,12 @@ class Clip:
     autopost: str = ""      # "1" = and post it to the connected accounts straight away
     seen: str = ""          # "1" once it has been shown in the feed
     language: str = ""      # e.g. "en", when the platform says
+    heat: float = 0.0       # how many times faster than a typical clip from the same streamer/game it's gaining views
 
 
 COLUMNS = list(Clip.__dataclass_fields__)
 PG_TYPES = {"views": "BIGINT", "duration": "DOUBLE PRECISION", "start": "DOUBLE PRECISION",
-            "end": "DOUBLE PRECISION", "score": "DOUBLE PRECISION"}
+            "end": "DOUBLE PRECISION", "score": "DOUBLE PRECISION", "heat": "DOUBLE PRECISION"}
 LOG_KEEP = 300
 
 
@@ -128,6 +129,10 @@ def _clip(row) -> Clip:
     for c in ("src_path", "out_path", "published_url", "error", "layout", "background",
               "thumbnail", "preview", "uploader", "category", "game", "approve", "seen", "autopost", "language"):
         data[c] = data.get(c) or ""
+    try:
+        data["heat"] = float(data.get("heat") or 0)
+    except (TypeError, ValueError):
+        data["heat"] = 0.0
     return Clip(**{c: data[c] for c in COLUMNS})
 
 
@@ -142,7 +147,7 @@ def add(con, clip: Clip) -> bool:
     cur = con.execute(f"INSERT INTO clips ({cols}) VALUES ({marks}) ON CONFLICT (id) DO NOTHING", asdict(clip))
     added = cur.rowcount == 1
     if not added:
-        con.execute("UPDATE clips SET views = :views, score = :score "
+        con.execute("UPDATE clips SET views = :views, score = :score, heat = :heat "
                     "WHERE id = :id AND status = 'discovered'", asdict(clip))
     con.commit()
     return added

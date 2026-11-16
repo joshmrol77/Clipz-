@@ -121,13 +121,16 @@ def _own_uploads(cfg: Config, c: Creator, now) -> list[Clip]:
 
 
 def _short_videos(cfg: Config, query: str, now, must_mention: str = "") -> list[dict]:
-    """Most-viewed short videos for a search, within the time window."""
-    out, results = [], _search(query, videos_filter(cfg.lookback_hours), SEARCH_RESULTS)
+    """Most-viewed short videos for a search, within the time window. Searching with #shorts
+    brings up Shorts (clips) instead of long videos."""
+    results = _search(f"{query} #shorts", videos_filter(cfg.lookback_hours), SEARCH_RESULTS)
+    seen, out = set(), []
+    results = [e for e in results if e.get("id") and not (e["id"] in seen or seen.add(e["id"]))]
     for e in results:
         # YouTube's search page lists Shorts without a length (and sometimes without views):
         # they're at most a minute, so don't throw them away for that.
-        is_short = "/shorts/" in (e.get("url") or "")
-        duration = e.get("duration") or (60 if is_short else 0)
+        # Regular videos always come with a length; a missing one means a Short.
+        duration = e.get("duration") or 60
         if not e.get("id") or not duration or duration > MAX_THIRD_PARTY_LENGTH:
             continue
         e = {**e, "duration": duration}

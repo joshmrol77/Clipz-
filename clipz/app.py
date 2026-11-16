@@ -28,7 +28,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.routing import PathConverter
 from werkzeug.utils import secure_filename
 
-from . import config, db, download, files, pipeline, publish, render, worker
+from . import config, db, download, files, pipeline, publish, rank, render, worker
 from .config import Creator
 from .publish import instagram, tiktok, youtube
 from .sources import kick as kick_source, twitch as twitch_source, youtube as youtube_source
@@ -339,8 +339,9 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
                 continue
             creator = c.creator_for(clip)
             items.append({**asdict(clip), "category": c.category_of(clip), "game": game, "key": creator_key(clip),
+                          "viral": rank.is_viral(clip),
                           "streamer": (creator.name or creator.channel) if creator else clip.creator})
-        items.sort(key=lambda x: (x["seen"] == "1", -x["score"]))
+        items.sort(key=lambda x: (x["seen"] == "1", not x["viral"], -(x["heat"] or 0), -x["score"]))
         return items
 
     @app.get("/api/feed")
@@ -356,7 +357,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
                  if (not game or x["game"].lower() == game.lower())
                  and (not creator or x["key"] == creator.lower())
                  and (not category or x["category"] == category)
-                 and low <= (x["views"] or 0) < high]
+                 and low <= (x["views"] or 0) < high
+                 and (request.args.get("viral") != "1" or x["viral"])]
         return jsonify(clips=items[offset:offset + limit], total=len(items))
 
     @app.get("/api/feed/filters")
@@ -366,6 +368,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         items = feed_items(c, c.connect())
         views = [{"range": r, "count": sum(1 for x in items if view_range(r)[0] <= (x["views"] or 0) < view_range(r)[1])}
                  for r in VIEW_RANGES]
+        viral = sum(1 for x in items if x["viral"])
         games, creators = {}, {}
         for x in items:
             if x["game"]:
@@ -385,7 +388,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         return jsonify(
             games=[{"name": n, "count": k} for n, k in sorted(games.items(), key=lambda kv: (-kv[1], kv[0].lower()))],
             creators=sorted(creators.values(), key=lambda x: (-x["count"], x["name"].lower()))[:60],
-            views=views)
+            views=views, viral=viral)
 
     @app.get("/api/clips/<clip:clip_id>/stream")
     def clip_stream(clip_id):

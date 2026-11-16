@@ -113,6 +113,8 @@
   .reel .act.done span.ic { color: var(--good); }
   .reel .act span.ic.hot { color: #fff; }
   .reel .trend { color: #ffb36b; font-weight: 700; }
+  .reel .viral { font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 4px; color: #1a0d00;
+                 background: linear-gradient(90deg, #ffb36b, #ff6b3d); text-shadow: none; }
   .sheet .layouts { flex-wrap: nowrap; }
   .sheet .layout { padding: 8px 4px; text-align: center; }
   .sheet label.field { flex: none; }
@@ -239,7 +241,7 @@ async function refresh() {
 
 // ---- Feed: swipe through clips like Reels ---------------------------------------------------
 let lastJob = "";
-const feed = { loaded: false, loading: false, clips: [], total: 0, game: "", creator: "", creatorName: "", views: "", active: null, seen: new Set() };
+const feed = { loaded: false, loading: false, clips: [], total: 0, game: "", creator: "", creatorName: "", views: "", viral: false, active: null, seen: new Set() };
 const VIEW_NAMES = { "": "Any views", "0-100": "0–100", "100-1000": "100–1K", "1000-10000": "1K–10K", "10000-100000": "10K–100K", "100000-": "100K+" };
 const ago = iso => {
   const h = (Date.now() - new Date(iso).getTime()) / 3.6e6;
@@ -371,7 +373,7 @@ function updateFeedbar() {
 // After each background search, add whatever is new to the end of the feed - no tapping needed.
 async function topUpFeed() {
   if (feed.loading) return;
-  const q = new URLSearchParams({ game: feed.game, creator: feed.creator, views: feed.views, offset: 0, limit: 50 });
+  const q = new URLSearchParams({ game: feed.game, creator: feed.creator, views: feed.views, viral: feed.viral ? 1 : "", offset: 0, limit: 50 });
   const data = await (await fetch("/api/feed?" + q)).json().catch(() => null);
   if (!data) return;
   const fresh = (data.clips || []).filter(c => !feed.clips.some(x => x.id === c.id));
@@ -389,7 +391,7 @@ async function loadFeed(reset) {
   if (feed.loading) return;
   feed.loading = true;
   if (reset) { feed.clips = []; feed.active = null; buildFeed(); }
-  const q = new URLSearchParams({ game: feed.game, creator: feed.creator, views: feed.views, offset: feed.clips.length, limit: 10 });
+  const q = new URLSearchParams({ game: feed.game, creator: feed.creator, views: feed.views, viral: feed.viral ? 1 : "", offset: feed.clips.length, limit: 10 });
   const data = await (await fetch("/api/feed?" + q)).json().catch(() => ({ clips: [], total: 0 }));
   const fresh = (data.clips || []).filter(c => !feed.clips.some(x => x.id === c.id));
   feed.clips.push(...fresh); feed.total = data.total || 0; feed.loaded = true; feed.loading = false;
@@ -406,7 +408,8 @@ function buildFeed() {
     h("span", { className: "logo" }, "Clipz"),
     h("button", { className: "pill" + (feed.game ? " set" : ""), on: { click: () => openFilter("game") } }, filterLabel + " ▾"),
     h("button", { className: "pill" + (feed.creator ? " set" : ""), on: { click: () => openFilter("creator") } }, (feed.creatorName || "Creator") + " ▾"),
-    h("button", { className: "pill" + (feed.views ? " set" : ""), on: { click: () => openFilter("views") } }, (feed.views ? VIEW_NAMES[feed.views] : "Views") + " ▾"),
+    h("button", { className: "pill" + (feed.views || feed.viral ? " set" : ""), on: { click: () => openFilter("views") } },
+      (feed.viral ? "🔥 Viral" : feed.views ? VIEW_NAMES[feed.views] : "Views") + " ▾"),
     h("button", { className: "pill find", on: { click: () => api("POST", "/api/run").then(() => toast("Looking for new clips…")) } }, "Find clips")));
   updateFeedbar();
   feed.observer?.disconnect();
@@ -416,14 +419,14 @@ function buildFeed() {
 }
 
 function emptyReel() {
-  const filtered = feed.game || feed.creator || feed.views;
+  const filtered = feed.game || feed.creator || feed.views || feed.viral;
   return h("div", { className: "reel empty" },
     h("div", { style: "font-size:40px" }, "✓"),
     h("div", { style: "color:#fff;font-weight:700;font-size:18px" }, filtered ? "Nothing here for this filter" : S && S.job ? "Finding clips…" : "You're all caught up"),
     h("div", {}, S && S.job && !filtered ? "New clips appear here by themselves - keep the app open." : ""),
     h("div", {}, !S.creators.length && !(S.games || []).length ? "Follow streamers or games on the Following tab, then tap Find clips."
       : filtered ? "Try another game or creator, or clear the filter." : "Tap Find clips to look for more."),
-    filtered ? h("button", { on: { click: () => { feed.game = feed.creator = feed.creatorName = feed.views = ""; loadFeed(true); } } }, "Clear filters")
+    filtered ? h("button", { on: { click: () => { feed.game = feed.creator = feed.creatorName = feed.views = ""; feed.viral = false; loadFeed(true); } } }, "Clear filters")
       : h("button", { className: "primary", on: { click: () => api("POST", "/api/run").then(() => toast("Looking for new clips…")) } }, "Find clips"));
 }
 
@@ -433,7 +436,8 @@ function reel(c) {
     h("div", { className: "bg", style: c.thumbnail ? `background-image:url("${encodeURI(c.thumbnail)}")` : "" }),
     stage,
     h("div", { className: "meta" },
-      h("div", { className: "who" }, c.streamer, h("span", { className: "plat " + c.platform }, c.platform)),
+      h("div", { className: "who" }, c.streamer, h("span", { className: "plat " + c.platform }, c.platform),
+        c.viral ? h("span", { className: "viral" }, "🔥 Viral potential") : null),
       h("div", { className: "title" }, c.title || ""),
       h("div", { className: "sub" }, trend(c), [c.game, `${compact(c.views)} views`, ago(c.created_at), c.uploader ? "clip by " + c.uploader : ""].filter(Boolean).join(" · "))),
     h("div", { className: "actions" },
@@ -569,12 +573,13 @@ async function openFilter(kind) {
   const pick = (value, name) => {
     d.close();
     if (kind === "game") feed.game = value;
-    else if (kind === "views") feed.views = value;
+    else if (kind === "views") { feed.viral = value === "viral"; feed.views = value === "viral" ? "" : value; }
     else { feed.creator = value; feed.creatorName = name; }
     loadFeed(true);
   };
   const items = kind === "views"
-    ? (data.views || []).map(v => h("button", { on: { click: () => pick(v.range) } }, `${VIEW_NAMES[v.range]} views  ·  ${v.count}`))
+    ? [h("button", { on: { click: () => pick("viral") } }, `🔥 Viral potential only  ·  ${data.viral || 0}`),
+       ...(data.views || []).map(v => h("button", { on: { click: () => pick(v.range) } }, `${VIEW_NAMES[v.range]} views  ·  ${v.count}`))]
     : kind === "game"
     ? data.games.map(g => h("button", { on: { click: () => pick(g.name) } }, `${g.name}${g.count ? "  ·  " + g.count : ""}`))
     : data.creators.map(c => h("button", { on: { click: () => pick(c.key, c.name) } },

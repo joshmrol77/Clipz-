@@ -86,10 +86,18 @@ def search_categories(query: str) -> list[dict]:
         return []
 
 
+DROPPED: dict = {}   # why Kick clips were left out, for the logs
+
+
 def _clip(cfg: Config, d: dict, now, creator: str, credit: str, category: str = "", game_labels: dict | None = None):
     views = d.get("views_count") or d.get("view_count") or d.get("views") or 0
     created = d.get("created_at", "")
-    if views < cfg.min_views or not created or age_hours(created, now) > cfg.lookback_hours:
+    reason = ("no date" if not created else f"under {cfg.min_views} views" if views < cfg.min_views
+              else "too old" if age_hours(created, now) > cfg.lookback_hours else "")
+    if reason:
+        DROPPED[reason] = DROPPED.get(reason, 0) + 1
+        if not DROPPED.get("_sample"):
+            DROPPED["_sample"] = {k: d.get(k) for k in ("views", "view_count", "views_count", "created_at", "duration")}
         return None
     ch = d.get("channel") or {}
     slug = ch.get("slug") or creator
@@ -177,12 +185,15 @@ def discover_games(cfg: Config, games: list[dict]) -> list[Clip]:
             errors.append(f"{label}: {last_error or 'no clips list'}")
             continue
         print(f"  kick games: {label}: Kick sent {len(clips)} clips", flush=True)
+        DROPPED.clear()
         for d in clips:
             ch = d.get("channel") or {}
             clip = _clip(cfg, d, now, ch.get("slug", ""), "", label, {g["name"].lower(): label})
             if clip:
                 clip.game = label
                 out.append(clip)
+    if DROPPED:
+        print(f"  kick games: left out {DROPPED}", flush=True)
     if errors and not out:
         raise RuntimeError("; ".join(errors))
     for e in errors:

@@ -455,6 +455,7 @@ def test_follow_a_game_and_get_top_clips_from_everyone(cfg, monkeypatch):
         return [clip_row("shared", "Togi", 5000)]
     monkeypatch.setattr(twitch, "_session", lambda c: None)
     monkeypatch.setattr(twitch, "_get", fake_get)
+    monkeypatch.setattr(twitch, "_get_pages", lambda s, path, pages, **p: fake_get(s, path, **p))
     monkeypatch.setattr(youtube, "_search", lambda q, sp, limit: [])
     found = sources.discover(cfg, log=lambda m: None)
     by_id = {c.id: c for c in found}
@@ -631,7 +632,7 @@ def test_youtube_shorts_without_length_or_views_are_kept(cfg, monkeypatch):
         {"id": "s2", "url": "https://www.youtube.com/shorts/s2", "title": "Fortnite few views", "view_count": 3}])
     cfg.min_views, cfg.games = 50, [{"name": "Fortnite", "label": "Fortnite"}]
     clips = youtube.discover_games(cfg, cfg.games)
-    assert [c.id for c in clips] == ["youtube:s1"] and clips[0].duration == 60
+    assert [c.id for c in clips] == ["youtube:s1", "youtube:v1"] and clips[0].duration == 60   # no length = a Short
 
 
 def test_clip_actions_work_when_the_host_passes_the_path_still_encoded(cloud_app, monkeypatch):
@@ -658,3 +659,26 @@ def test_feed_view_ranges(cloud_app):
     assert get("") == [40, 100, 999, 5000, 250000] and get("junk") == [40, 100, 999, 5000, 250000]
     counts = {v["range"]: v["count"] for v in client.get("/api/feed/filters", **base).get_json()["views"]}
     assert counts == {"0-100": 1, "100-1000": 2, "1000-10000": 1, "10000-100000": 0, "100000-": 1}
+
+
+def test_heat_finds_breakout_clips_and_viral_filter(cloud_app):
+    from datetime import datetime, timedelta, timezone
+    from clipz import rank
+    now = datetime.now(timezone.utc)
+    ago = lambda h: (now - timedelta(hours=h)).isoformat()
+    # a streamer whose clips usually get ~100 views/hour, and one clip doing 8,000 in 2 hours
+    group = [clip(f"n{i}", views=1200, created_at=ago(12)) for i in range(5)] + [clip("hot", views=8000, created_at=ago(2))]
+    rank.add_heat(group, lambda c: c.creator, now)
+    hot = group[-1]
+    assert hot.heat > 30 and all(c.heat == 1.0 for c in group[:-1])
+    assert rank.is_viral(hot, now) and not rank.is_viral(group[0], now)
+    assert rank.is_viral(clip("boom", views=60000, created_at=ago(3)), now)          # exploding on its own
+
+    client, _, base = cloud_app
+    con = config.load("config.toml").connect()
+    for c in group:
+        db.add(con, c)
+    feed = client.get("/api/feed", **base).get_json()["clips"]
+    assert feed[0]["id"] == "twitch:hot" and feed[0]["viral"] is True               # hottest first
+    assert [x["id"] for x in client.get("/api/feed?viral=1", **base).get_json()["clips"]] == ["twitch:hot"]
+    assert client.get("/api/feed/filters", **base).get_json()["viral"] == 1

@@ -65,6 +65,21 @@ def _get(s: requests.Session, path: str, **params) -> list[dict]:
     return r.json()["data"]
 
 
+def _get_pages(s: requests.Session, path: str, pages: int, **params) -> list[dict]:
+    """Like _get, following Twitch's page cursor for up to `pages` pages."""
+    out = []
+    for _ in range(pages):
+        r = s.get(f"{API}/{path}", params=params, timeout=30)
+        r.raise_for_status()
+        body = r.json()
+        out += body.get("data", [])
+        cursor = (body.get("pagination") or {}).get("cursor")
+        if not cursor:
+            break
+        params = {**params, "after": cursor}
+    return out
+
+
 def search_categories(cfg: Config, query: str, limit: int = 8) -> list[dict]:
     """Twitch games/categories matching what's been typed so far."""
     query = query.strip()
@@ -139,7 +154,7 @@ def discover_games(cfg: Config, games: list[dict]) -> list[Clip]:
     for g in games:
         if not g.get("twitch_id"):
             continue
-        for d in _get(s, "clips", game_id=g["twitch_id"], started_at=started, ended_at=ended, first=100):
+        for d in _get_pages(s, "clips", 3, game_id=g["twitch_id"], started_at=started, ended_at=ended, first=100):
             if d["view_count"] >= cfg.min_views:
                 name = d.get("broadcaster_name", "")
                 label = g.get("label") or g["name"]
