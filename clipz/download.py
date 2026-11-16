@@ -9,6 +9,19 @@ from .db import Clip
 from .render import ffmpeg
 
 
+def stream_url(url: str, max_height: int = 720) -> str:
+    """The direct address of a clip's video file (an mp4), without downloading it."""
+    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
+        info = ydl.extract_info(url, download=False)
+    formats = [f for f in info.get("formats") or [] if f.get("url") and f.get("vcodec") != "none"
+               and (f.get("protocol") or "").startswith("http") and (f.get("height") or 0) <= max_height]
+    if not formats:
+        if info.get("url"):
+            return info["url"]
+        raise RuntimeError("no playable video found")
+    return max(formats, key=lambda f: ((f.get("height") or 0), f.get("tbr") or 0))["url"]
+
+
 def fetch_video(url: str, dest_dir: Path, name: str, max_seconds: int = 180) -> Path:
     """Download the first `max_seconds` of any video link yt-dlp understands (or a direct
     .mp4 link) - used for gameplay backgrounds."""

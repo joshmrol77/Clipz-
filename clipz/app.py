@@ -359,6 +359,29 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             games=[{"name": n, "count": k} for n, k in sorted(games.items(), key=lambda kv: (-kv[1], kv[0].lower()))],
             creators=sorted(creators.values(), key=lambda x: (-x["count"], x["name"].lower()))[:60])
 
+    @app.get("/api/clips/<path:clip_id>/stream")
+    def clip_stream(clip_id):
+        """A direct video address the feed can autoplay in its own player. Twitch's embedded
+        player won't start by itself on phones; a plain muted <video> will."""
+        c = cfg()
+        con = c.connect()
+        clip = db.get(con, clip_id)
+        if not clip:
+            abort(404)
+        if clip.platform == "kick" and clip.preview:
+            return jsonify(url=clip.preview)
+        if clip.platform != "twitch":
+            return jsonify(url="")             # YouTube: its own player (Vercel can't fetch its videos)
+        cached = db.kv_get(con, f"stream:{clip_id}")
+        if cached and time.time() - cached["at"] < 3600:
+            return jsonify(url=cached["url"])
+        try:
+            url = download.stream_url(clip.url)
+        except Exception as e:
+            return jsonify(url="", error=str(e)[:200])
+        db.kv_set(con, f"stream:{clip_id}", {"url": url, "at": time.time()})
+        return jsonify(url=url)
+
     @app.post("/api/clips/seen")
     def mark_seen():
         con = cfg().connect()

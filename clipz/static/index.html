@@ -86,6 +86,8 @@
   .reel .stage { position: relative; width: 100%; max-width: 900px; aspect-ratio: 16/9; background: #000; }
   .reel .stage > * { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; object-fit: contain; }
   .reel .stage img { object-fit: cover; }
+  .reel .stage > button.sound { inset: auto; left: 10px; bottom: 10px; width: auto; height: auto; z-index: 3; border-radius: 99px;
+                 background: rgba(0,0,0,.6); color: #fff; border: 0; font-size: 13px; padding: 6px 12px; }
   .reel .meta { position: absolute; left: 14px; right: 84px; bottom: 18px; text-shadow: 0 1px 3px rgba(0,0,0,.9); }
   .reel .who { font-weight: 700; font-size: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .reel .plat { font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; color: #fff; }
@@ -251,21 +253,55 @@ function toast(text) {
 }
 
 let hlsLoading = null;
-function playerFor(c) {
-  if (c.platform === "kick") {
-    const v = h("video", { controls: true, autoplay: true, muted: true, playsInline: true, loop: true });
-    const src = c.preview;
-    if (!src.includes(".m3u8") || v.canPlayType("application/vnd.apple.mpegurl")) v.src = src;
-    else {  // phones other than iPhone need a small helper library for Kick's streaming format
-      hlsLoading = hlsLoading || new Promise((ok, fail) => document.head.append(h("script", {
-        src: "https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js", onload: ok, onerror: fail })));
-      hlsLoading.then(() => { const hls = new window.Hls(); hls.loadSource(src); hls.attachMedia(v); }).catch(() => {});
-    }
-    return v;
-  }
+// The feed plays clips in its own <video> so they start by themselves: phones allow a muted
+// video to autoplay, but Twitch's embedded player insists on a tap. YouTube keeps its own player.
+let soundOn = (() => { try { return localStorage.getItem("clipz-sound") === "1"; } catch { return false; } })();
+
+function streamFor(c) {   // fetched once per clip, ahead of time for the next one
+  if (!c._stream) c._stream = fetch(`/api/clips/${encodeURIComponent(c.id)}/stream`).then(r => r.json()).then(d => d.url || "").catch(() => "");
+  return c._stream;
+}
+
+function videoPlayer(c, src) {
+  const v = h("video", { autoplay: true, muted: true, playsInline: true, loop: true, preload: "auto" });
+  v.setAttribute("muted", ""); v.setAttribute("playsinline", "");   // iPhone checks the attributes
+  const start = () => {
+    v.muted = !soundOn;
+    v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });   // sound refused: play muted
+  };
+  if (src.includes(".m3u8") && !v.canPlayType("application/vnd.apple.mpegurl")) {
+    hlsLoading = hlsLoading || new Promise((ok, fail) => document.head.append(h("script", {
+      src: "https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js", onload: ok, onerror: fail })));
+    hlsLoading.then(() => { const hls = new window.Hls(); hls.loadSource(src); hls.attachMedia(v); start(); }).catch(() => {});
+  } else { v.src = src; start(); }
+  const badge = h("button", { className: "sound" }, v.muted || !soundOn ? "🔇 Tap for sound" : "🔊");
+  const sync = () => { badge.textContent = v.muted ? "🔇 Tap for sound" : "🔊"; };
+  v.addEventListener("volumechange", sync);
+  const toggle = e => {
+    e.stopPropagation();
+    v.muted = !v.muted; soundOn = !v.muted;
+    try { localStorage.setItem("clipz-sound", soundOn ? "1" : "0"); } catch {}
+    if (v.paused) v.play().catch(() => {});
+    sync();
+  };
+  v.addEventListener("click", toggle);
+  badge.addEventListener("click", toggle);
+  setTimeout(sync, 400);
+  return [v, badge];
+}
+
+function embedPlayer(c) {
   const url = c.platform === "twitch" ? `${c.preview}&parent=${location.hostname}&autoplay=true&muted=true`
-    : c.preview + (c.preview.includes("?") ? "&" : "?") + "autoplay=1&mute=1&playsinline=1";
+    : c.preview + (c.preview.includes("?") ? "&" : "?") + "autoplay=1&mute=1&playsinline=1&controls=0&loop=1";
   return h("iframe", { src: url, allow: "autoplay; fullscreen; encrypted-media; picture-in-picture", allowFullscreen: true });
+}
+
+async function mountPlayer(el) {
+  const c = el._clip;
+  if (c.platform === "youtube" || !c.preview && c.platform !== "twitch") return el._stage.replaceChildren(embedPlayer(c));
+  const src = c.platform === "kick" ? c.preview : await streamFor(c);
+  if (feed.active !== el) return;                        // swiped away while we were fetching
+  el._stage.replaceChildren(...(src ? videoPlayer(c, src) : [embedPlayer(c)]));
 }
 
 function updateFeedbar() {
@@ -360,7 +396,9 @@ function activate(el) {
   }
   feed.active = el;
   const c = el._clip;
-  if (c.preview) el._stage.replaceChildren(playerFor(c));
+  mountPlayer(el);
+  const nextEl = el.nextElementSibling;                  // get the next clip's video ready too
+  if (nextEl && nextEl._clip && nextEl._clip.platform === "twitch") streamFor(nextEl._clip);
   if (!feed.seen.has(c.id)) { feed.seen.add(c.id); markSeen(c.id); }
   const reels = [...$("feed").querySelectorAll(".reel:not(.empty)")];
   if (reels.indexOf(el) >= reels.length - 3 && feed.clips.length < feed.total) loadFeed(false);

@@ -580,3 +580,18 @@ def test_game_is_recognised_from_clip_titles(cfg):
         assert cfg.infer_game(title) == "GTA 6", title
     for title in ("Speed plays GTA 5", "GTA V stunts", "a gta 60 second clip", "Speed meets Ronaldo"):
         assert cfg.infer_game(title) == "", title
+
+
+def test_feed_gets_direct_video_for_autoplay(cloud_app, monkeypatch):
+    client, _, base = cloud_app
+    from clipz import download
+    calls = []
+    monkeypatch.setattr(download, "stream_url", lambda url, max_height=720: calls.append(url) or "https://cdn/clip.mp4")
+    con = config.load("config.toml").connect()
+    db.add(con, Clip(id="twitch:a", platform="twitch", creator="x", credit="x", title="t", url="https://clips.twitch.tv/a"))
+    db.add(con, Clip(id="kick:b", platform="kick", creator="x", credit="x", title="t", url="u", preview="https://k/b.m3u8"))
+    db.add(con, Clip(id="youtube:c", platform="youtube", creator="x", credit="x", title="t", url="u"))
+    get = lambda cid: client.get(f"/api/clips/{cid}/stream", **base).get_json()["url"]
+    assert get("twitch:a") == "https://cdn/clip.mp4" and get("twitch:a") == "https://cdn/clip.mp4"
+    assert calls == ["https://clips.twitch.tv/a"]                       # looked up once, then remembered
+    assert get("kick:b") == "https://k/b.m3u8" and get("youtube:c") == ""
