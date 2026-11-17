@@ -65,6 +65,22 @@ def _fill(w: int, h: int) -> str:
     return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
 
 
+TITLE_SIZE = 72
+
+
+def headline(font: str, title_files: list[str], y_top: str, size: int = TITLE_SIZE, box: bool = False) -> str:
+    """drawtext filters for a multi-line headline, one per line, each centred on its own (works on
+    any ffmpeg; the text_align option only exists in newer builds). y_top is an expression."""
+    line_h = int(size * 1.2)
+    style = (f"fontfile='{_esc(font)}':fontcolor=white:borderw=6:bordercolor=black:expansion=none:fontsize={size}"
+             f":x=(w-text_w)/2" + (":box=1:boxcolor=black@0.45:boxborderw=18" if box else ""))
+    return ",".join(f"drawtext={style}:textfile='{_esc(f)}':y=({y_top})+{i * line_h}" for i, f in enumerate(title_files))
+
+
+def headline_height(title_files: list[str], size: int = TITLE_SIZE) -> int:
+    return len(title_files) * int(size * 1.2)
+
+
 def loud_moments(src: Path, max_duration: int, count: int = 3, gap: float = 4.0) -> list[float]:
     """Times (seconds) of the clip's loudest moments - usually the big reactions. Measures the
     audio level every half second and keeps the peaks that clearly stand out."""
@@ -96,17 +112,18 @@ def loud_moments(src: Path, max_duration: int, count: int = 3, gap: float = 4.0)
     return sorted(picks)
 
 
-def hype_graph(font: str, title_file: str, credit_file: str, peaks: list[float], has_audio: bool) -> str:
+def hype_graph(font: str, title_files: list[str], credit_file: str, peaks: list[float], has_audio: bool) -> str:
     """Viral edit: fill the screen, punch in + flash + bass hit on each peak, hook headline on top."""
-    text = f"fontfile='{_esc(font)}':fontcolor=white:borderw=7:bordercolor=black:text_align=C:expansion=none:x=(w-text_w)/2"
-    zoom = "+".join(f"0.22*gte(t,{p:.2f})*max(0,1-(t-{p:.2f})/0.6)" for p in peaks) or "0"
+    text = f"fontfile='{_esc(font)}':fontcolor=white:borderw=7:bordercolor=black:expansion=none:x=(w-text_w)/2"
+    # zoompan works on every ffmpeg version (scale with a time expression needs ffmpeg 5+); it counts
+    # output frames, so time = on/30.
+    zoom = "+".join(f"0.22*gte(on/30,{p:.2f})*max(0,1-(on/30-{p:.2f})/0.6)" for p in peaks) or "0"
     flashes = "".join(f",drawbox=x=0:y=0:w=iw:h=ih:color=white@0.5:t=fill:enable='between(t,{p:.2f},{p + 0.07:.2f})'"
                       for p in peaks)
     graph = (
-        f"[0:v]{_fill(W, H)},scale=w='trunc(iw*(1+{zoom})/2)*2':h='trunc(ih*(1+{zoom})/2)*2':eval=frame,"
-        f"crop={W}:{H},setsar=1{flashes},"
-        f"drawtext={text}:textfile='{_esc(title_file)}':fontsize=76:line_spacing=12:y={int(H * 0.11)}"
-        f":box=1:boxcolor=black@0.45:boxborderw=22,"
+        f"[0:v]fps=30,{_fill(W, H)},setsar=1,"
+        f"zoompan=z='1+{zoom}':x='iw/2-iw/zoom/2':y='ih/2-ih/zoom/2':d=1:s={W}x{H}:fps=30{flashes},"
+        f"{headline(font, title_files, str(int(H * 0.11)), 76, box=True)},"
         f"drawtext={text}:textfile='{_esc(credit_file)}':fontsize=40:y={H - SAFE_BOTTOM},format=yuv420p[v]"
     )
     if has_audio:
@@ -115,14 +132,15 @@ def hype_graph(font: str, title_file: str, credit_file: str, peaks: list[float],
             f"aformat=channel_layouts=stereo,adelay={int(p * 1000)}|{int(p * 1000)}[b{i}]" for i, p in enumerate(peaks))
         mix_in = "[m]" + "".join(f"[b{i}]" for i in range(len(peaks)))
         graph += (f";[0:a]aresample=48000,aformat=channel_layouts=stereo[m]{booms}"
-                  f";{mix_in}amix=inputs={len(peaks) + 1}:normalize=0:duration=first,loudnorm=I=-14:TP=-1.5:LRA=11[a]")
+                  f";{mix_in}amix=inputs={len(peaks) + 1}:duration=first:dropout_transition=0,volume={len(peaks) + 1},"
+                  f"loudnorm=I=-14:TP=-1.5:LRA=11[a]")   # amix divides by the input count; volume undoes it (works on ffmpeg 4.x)
     return graph
 
 
-def filtergraph(layout: str, font: str, title_file: str, credit_file: str) -> str:
-    text = f"fontfile='{_esc(font)}':fontcolor=white:borderw=6:bordercolor=black:text_align=C:expansion=none:x=(w-text_w)/2"
-    title = f"drawtext={text}:textfile='{_esc(title_file)}':fontsize=72:line_spacing=14"
+def filtergraph(layout: str, font: str, title_files: list[str], credit_file: str) -> str:
+    text = f"fontfile='{_esc(font)}':fontcolor=white:borderw=6:bordercolor=black:expansion=none:x=(w-text_w)/2"
     credit = f"drawtext={text}:textfile='{_esc(credit_file)}':fontsize=44"
+    title_h = headline_height(title_files)
     if layout == "framed":
         fg_h = W * 9 // 16  # a 16:9 clip scaled to full width; other ratios just centre
         return (
@@ -130,7 +148,7 @@ def filtergraph(layout: str, font: str, title_file: str, credit_file: str) -> st
             f"[a]{_fill(W, H)},boxblur=30:5,eq=brightness=-0.15[bg];"
             f"[b]scale={W}:-2[fg];"
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2[v0];"
-            f"[v0]{title}:y={(H - fg_h) // 2}-text_h-60[v1];"
+            f"[v0]{headline(font, title_files, str((H - fg_h) // 2 - 60 - title_h))}[v1];"
             f"[v1]{credit}:y={(H + fg_h) // 2}+50,format=yuv420p[v]"
         )
     if layout == "full":
@@ -142,7 +160,7 @@ def filtergraph(layout: str, font: str, title_file: str, credit_file: str) -> st
             f"[1:v]{_fill(W, half)},setsar=1,fps=30[bottom];"
             f"[top]fps=30[top30];"
             f"[top30][bottom]vstack=shortest=1[v0];"
-            f"[v0]{title}:y={half}-text_h/2[v1];"
+            f"[v0]{headline(font, title_files, str(half - title_h // 2))}[v1];"
             f"[v1]{credit}:y={H - SAFE_BOTTOM},format=yuv420p[v]"
         )
     raise ValueError(f"unknown layout {layout!r}; choose one of {list(LAYOUTS)}")
@@ -162,18 +180,22 @@ def render(src: Path, out: Path, title: str, credit: str, max_duration: int = 60
             raise RuntimeError("the split layout needs a gameplay video - add one first")
         inputs += ["-stream_loop", "-1", "-i", str(background)]  # loop it under clips of any length
     width = 24 if layout == "split" else 20
-    headline = "\n".join(textwrap.wrap(title.strip().upper(), width=width)[:4]) or " "
+    lines = textwrap.wrap(title.strip().upper(), width=width)[:4] or [" "]
     with tempfile.TemporaryDirectory() as tmp:
-        title_file, credit_file = Path(tmp, "title.txt"), Path(tmp, "credit.txt")
-        title_file.write_text(headline, encoding="utf-8")
+        title_files = []
+        for i, line in enumerate(lines):
+            f = Path(tmp, f"title{i}.txt")
+            f.write_text(line, encoding="utf-8")
+            title_files.append(str(f))
+        credit_file = Path(tmp, "credit.txt")
         credit_file.write_text(credit or " ", encoding="utf-8")
         if layout == "hype":
             peaks = loud_moments(src, max_duration)
             has_audio = bool(peaks) or _has_audio(src)
-            graph = hype_graph(find_font(font), str(title_file), str(credit_file), peaks, has_audio)
+            graph = hype_graph(find_font(font), title_files, str(credit_file), peaks, has_audio)
             audio = ["-map", "[a]"] if has_audio and peaks else ["-map", "0:a?", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11"]
         else:
-            graph = filtergraph(layout, find_font(font), str(title_file), str(credit_file))
+            graph = filtergraph(layout, find_font(font), title_files, str(credit_file))
             audio = ["-map", "0:a?", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11"]
         cmd = [
             ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", *inputs, "-t", str(max_duration),

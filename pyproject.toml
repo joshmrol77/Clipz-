@@ -7,7 +7,7 @@ dependencies = [
     "yt-dlp",
     "requests",
     "flask",
-    "imageio-ffmpeg",     # ships a known-good ffmpeg, so nothing else needs installing
+    "imageio-ffmpeg==0.5.1",  # ffmpeg 4.2 with text drawing, 73 MB; newer builds are 172 MB (too big for Vercel) or lack text
     "psycopg[binary]",    # Postgres, for the cloud version
     "vercel",             # Vercel Blob storage, for the cloud version
     "curl_cffi>=0.10,<0.18",  # browser-like requests Kick requires; yt-dlp supports up to 0.17

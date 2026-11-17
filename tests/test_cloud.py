@@ -459,6 +459,8 @@ def test_follow_a_game_and_get_top_clips_from_everyone(cfg, monkeypatch):
     monkeypatch.setattr(twitch, "_get", fake_get)
     monkeypatch.setattr(twitch, "_get_pages", lambda s, path, pages, **p: fake_get(s, path, **p))
     monkeypatch.setattr(youtube, "_search", lambda q, sp, limit: [])
+    from clipz.sources import kick
+    monkeypatch.setattr(kick, "discover_games", lambda cfg, games: [])
     found = sources.discover(cfg, log=lambda m: None)
     by_id = {c.id: c for c in found}
     assert set(by_id) == {"twitch:shared", "twitch:g1"}                    # under min views dropped

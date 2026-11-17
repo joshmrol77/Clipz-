@@ -1,7 +1,7 @@
 yt-dlp
 requests
 flask
-imageio-ffmpeg
+imageio-ffmpeg==0.5.1
 psycopg[binary]
 vercel
 curl_cffi>=0.10,<0.18
