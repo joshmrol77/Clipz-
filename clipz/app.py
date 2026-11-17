@@ -243,7 +243,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             waiting=len(db.by_status(con, "discovered")),
             settings=settings,
             accounts={**{n: m.connected(c) for n, m in publish.PLATFORMS.items()},
-                      "twitch": bool(c.twitch.get("client_id") and c.twitch.get("client_secret"))},
+                      "twitch": bool(c.twitch.get("client_id") and c.twitch.get("client_secret")),
+                      "ytcookies": bool(db.kv_get(con, "youtube_cookies"))},
             layouts=render.LAYOUTS, backgrounds=pipeline.backgrounds(c),
             tiktok_redirect=redirect_uri("tiktok"), youtube_redirect=redirect_uri("youtube"),
             hosted=bool(password), cloud=cloud, job=job, log=db.log_tail(con),
@@ -767,8 +768,38 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         say("Twitch connected.")
         return jsonify(ok=True)
 
+    @app.post("/api/connect/youtube-cookies")
+    def connect_youtube_cookies():
+        try:
+            cookies = download.clean_cookies(request.get_json().get("cookies", ""))
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        con = cfg().connect()
+        warning = ""
+        try:   # a quick check that YouTube accepts them from here
+            download.stream_url("https://www.youtube.com/watch?v=jNQXAC9IVRw", cookies=cookies)
+        except Exception as e:
+            if "not a bot" in str(e) or "Sign in" in str(e):
+                return jsonify(error="YouTube didn't accept this sign-in. Export the cookies again "
+                                     "(from a private window, then close it) and paste them here."), 400
+            warning = str(e)[:200]
+        db.kv_set(con, "youtube_cookies", {"text": cookies, "at": time.time()})
+        retried = 0
+        for clip in db.by_status(con, "failed"):
+            if clip.platform == "youtube":
+                db.update(con, clip.id, status="queued", error="")
+                retried += 1
+        say("YouTube sign-in added." + (f" Retrying {retried} YouTube clip{'s' * (retried != 1)}." if retried else ""))
+        if retried:
+            start_worker()
+        return jsonify(ok=True, warning=warning, retried=retried)
+
     @app.post("/api/disconnect/<name>")
     def disconnect(name):
+        if name == "ytcookies":
+            db.kv_delete(cfg().connect(), "youtube_cookies")
+            say("YouTube sign-in removed.")
+            return jsonify(ok=True)
         if name == "twitch":
             config.save_settings(cfg(), {"twitch": {"client_id": "", "client_secret": ""}})
             say("Twitch disconnected.")

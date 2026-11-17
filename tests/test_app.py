@@ -274,3 +274,47 @@ def test_streamer_search_suggests_twitch_channels_live_first(env, monkeypatch):
     client.get("/api/search/streamers?platform=twitch&q=togi")
     assert tokens_asked == [1]                                                  # token reused
     assert client.get("/api/search/streamers?platform=kick&q=togi").get_json()["results"] == []
+
+
+def test_youtube_cookies_are_cleaned_checked_used_and_retry_failed_clips(env, monkeypatch):
+    from clipz import download
+    client, tmp = env
+    txt = ("# Netscape HTTP Cookie File\n"
+           ".youtube.com\tTRUE\t/\tTRUE\t1999999999\tSID\tabc\n"
+           "#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1999999999\tLOGIN_INFO\txyz\n"
+           ".bank.com\tTRUE\t/\tTRUE\t1999999999\tsession\tsecret\n")
+    cleaned = download.clean_cookies(txt)
+    assert "SID\tabc" in cleaned and "LOGIN_INFO" in cleaned and "bank" not in cleaned
+    as_json = json.dumps([{"domain": ".youtube.com", "name": "__Secure-3PSID", "value": "v", "path": "/",
+                           "secure": True, "expirationDate": 1999999999.5}])
+    assert "__Secure-3PSID\tv" in download.clean_cookies(as_json)
+    with pytest.raises(ValueError):
+        download.clean_cookies(".youtube.com\tTRUE\t/\tTRUE\t0\tPREF\tx\n")   # not signed in
+
+    seen = {}
+    def fake_stream(url, max_height=720, cookies=""):
+        seen["cookies"] = cookies
+        if "SID\tbad" in cookies:
+            raise RuntimeError("Sign in to confirm you're not a bot")
+        return "https://x/v.mp4"
+    monkeypatch.setattr(download, "stream_url", fake_stream)
+    con = config.load(str(tmp / "config.toml")).connect()
+    db.kv_set(con, "migrated:no_auto_edit", 1)   # production has long since done this one-off step
+    db.add(con, Clip(id="youtube:a", platform="youtube", creator="s", credit="s", title="t", url="u", status="failed"))
+    db.add(con, Clip(id="twitch:b", platform="twitch", creator="s", credit="s", title="t", url="u", status="failed"))
+
+    r = post(client, "/api/connect/youtube-cookies", {"cookies": txt.replace("abc", "bad")})
+    assert r.status_code == 400 and client.get("/api/state").get_json()["accounts"]["ytcookies"] is False
+    r = post(client, "/api/connect/youtube-cookies", {"cookies": txt})
+    assert r.status_code == 200 and r.get_json()["retried"] == 1 and "SID\tabc" in seen["cookies"]
+    state = client.get("/api/state").get_json()
+    assert state["accounts"]["ytcookies"] is True and "abc" not in json.dumps(state)
+    assert db.get(con, "youtube:a").status != "failed"   # retried (the worker may already have picked it up)
+    assert db.get(con, "twitch:b").status == "failed"
+
+    got = {}
+    monkeypatch.setattr(download, "download", lambda clip, d, cookies="": got.setdefault("c", cookies) and (_ for _ in ()).throw(RuntimeError("stop")))
+    pipeline.process(config.load(str(tmp / "config.toml")), con, [db.get(con, "youtube:a")], log=lambda m: None)
+    assert "SID\tabc" in got["c"]
+    assert post(client, "/api/disconnect/ytcookies").status_code == 200
+    assert client.get("/api/state").get_json()["accounts"]["ytcookies"] is False

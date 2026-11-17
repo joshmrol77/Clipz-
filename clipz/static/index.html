@@ -988,6 +988,37 @@ function gamesPanel() {
     : null);
 }
 
+function ytCookiesPanel() {
+  const box = h("textarea", { rows: 4, placeholder: "Paste cookies.txt (or the JSON export) here", style: "width:100%;font-size:16px;box-sizing:border-box" });
+  const file = h("input", { type: "file", accept: ".txt,.json,text/plain,application/json", on: { change: async () => {
+    if (file.files[0]) box.value = await file.files[0].text();
+  } } });
+  const go = h("button", { className: "primary", on: { click: async () => {
+    go.disabled = true; go.textContent = "Checking with YouTube…";
+    const r = await fetch("/api/connect/youtube-cookies", { method: "POST", headers: { "Content-Type": "application/json", "X-Clipz": "1" },
+      body: JSON.stringify({ cookies: box.value }) });
+    const data = await r.json().catch(() => ({}));
+    go.disabled = false; go.textContent = "Add YouTube sign-in";
+    if (!r.ok) return toast(data.error || "Something went wrong");
+    toast(data.retried ? `Signed in - retrying ${data.retried} YouTube clip${data.retried === 1 ? "" : "s"}` : "YouTube sign-in added");
+    refresh();
+  } } }, "Add YouTube sign-in");
+  return h("div", { className: "panel" },
+    h("div", { className: "row" }, h("h2", { style: "margin-right:auto" }, "YouTube sign-in"), statusBadge("ytcookies")),
+    S.accounts.ytcookies
+      ? h("div", { className: "row", style: "margin-top:12px" },
+          h("span", { className: "muted", style: "margin-right:auto" }, "Clipz can download YouTube clips. If they start failing again, the sign-in expired - remove it and add a fresh one."),
+          disconnectButton("ytcookies", "the YouTube sign-in"))
+      : [h("p", { className: "muted" }, "YouTube blocks downloads from Vercel unless they come from a signed-in account. Use a spare Google account, not your main one."),
+         h("ol", { className: "muted", style: "padding-left:20px;margin:6px 0;line-height:1.5" },
+           h("li", {}, "On a computer, install the free \"Get cookies.txt LOCALLY\" extension (Chrome or Firefox)."),
+           h("li", {}, "Open a private/incognito window, sign in on youtube.com, and allow the extension there."),
+           h("li", {}, "Click the extension → Export. Then close the private window without signing out (that keeps the sign-in valid longer)."),
+           h("li", {}, "Upload or paste the file below.")),
+         file, box,
+         h("div", { className: "row", style: "margin-top:12px" }, go)]);
+}
+
 function field(label, input) { return h("label", { className: "field" }, label, input); }
 function text(value, placeholder = "", type = "text") {
   return h("input", { type, value: value ?? "", placeholder, on: { input: () => dirty = true } });
@@ -1069,6 +1100,7 @@ function renderSettings() {
            h("div", { className: "row" }, field("Client ID", f.twId), field("Client secret", f.twSecret)),
            h("div", { className: "row", style: "margin-top:12px" },
              h("button", { className: "primary", on: { click: () => api("POST", "/api/connect/twitch", { client_id: f.twId.value, client_secret: f.twSecret.value }) } }, "Connect Twitch"))]),
+    ytCookiesPanel(),
     h("div", { className: "panel" },
       h("h2", {}, "What to look for"),
       h("div", { className: "row", style: "margin-top:10px" },

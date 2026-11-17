@@ -53,7 +53,15 @@ def process(cfg: Config, con, clips, log=print) -> None:
         try:
             src = files.local(cfg, clip.src_path) if clip.src_path else None
             if not src or not src.exists():
-                src = dl.download(clip, cfg.data_dir / "raw")
+                cookies = (db.kv_get(con, "youtube_cookies") or {}).get("text", "") if clip.platform == "youtube" else ""
+                try:
+                    src = dl.download(clip, cfg.data_dir / "raw", cookies)
+                except Exception as e:
+                    if clip.platform == "youtube" and "not a bot" in str(e):
+                        raise RuntimeError("YouTube blocked the download. "
+                                           + ("Your YouTube sign-in has expired - add it again in Settings."
+                                              if cookies else "Add a YouTube sign-in in Settings to fix this.")) from e
+                    raise
                 db.update(con, clip.id, src_path=files.save(cfg, src, "raw"))
             layout, bg = clip.layout or cfg.render.get("layout", "framed"), None
             if layout == "split":
