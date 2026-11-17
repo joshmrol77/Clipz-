@@ -84,3 +84,25 @@ def test_old_database_gains_new_columns(tmp_path):
     old.execute("INSERT INTO clips (id, title, status) VALUES ('a', 't', 'rendered')")
     old.commit(); old.close()
     assert db.get(db.connect(tmp_path / "old.sqlite"), "a").layout == ""
+
+
+def test_viral_edit_finds_loud_moments_and_renders(tmp_path):
+    src, out = tmp_path / "react.mp4", tmp_path / "hype.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=s=640x360:d=8", "-f", "lavfi", "-i",
+                    "aevalsrc='0.05*sin(2*PI*300*t)+0.9*sin(2*PI*500*t)*between(t,3,3.6)':d=8:s=44100",
+                    "-shortest", "-pix_fmt", "yuv420p", str(src)], check=True)
+    peaks = render.loud_moments(src, 60)
+    assert peaks and abs(peaks[0] - 3.0) < 0.6
+    render.render(src, out, "He actually did it", "twitch.tv/x", layout="hype")
+    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,width,height",
+                            "-of", "csv=p=0", str(out)], capture_output=True, text=True, check=True).stdout.split()
+    assert "video,1080,1920" in probe and "audio" in probe
+
+
+def test_viral_edit_handles_silent_clips(tmp_path):
+    src, out = tmp_path / "silent.mp4", tmp_path / "hype.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=s=640x360:d=2",
+                    "-pix_fmt", "yuv420p", str(src)], check=True)
+    assert render.loud_moments(src, 60) == []
+    render.render(src, out, "No sound", "x", layout="hype")
+    assert out.stat().st_size > 1000

@@ -116,7 +116,8 @@
   .reel .trend { color: #ffb36b; font-weight: 700; }
   .reel .viral { font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 4px; color: #1a0d00;
                  background: linear-gradient(90deg, #ffb36b, #ff6b3d); text-shadow: none; }
-  .sheet .layouts { flex-wrap: nowrap; }
+  .sheet .layouts { flex-wrap: nowrap; gap: 6px; }
+  .sheet .layout { font-size: 11px; }
   .sheet .layout { padding: 8px 4px; text-align: center; }
   .sheet label.field { flex: none; }
   .feedbar { position: fixed; top: 0; left: 0; right: 0; z-index: 25; display: flex; gap: 8px; align-items: center;
@@ -668,8 +669,10 @@ const MINI = {
   framed: () => [h("i", { className: "txt", style: "top:16px" }), h("i", { className: "clipbox", style: "top:27px;height:26px" })],
   full: () => [h("i", { className: "clipbox", style: "top:0;height:80px" })],
   split: () => [h("i", { className: "clipbox", style: "top:0;height:40px" }), h("i", { className: "game", style: "top:40px;height:40px" }), h("i", { className: "txt", style: "top:38px" })],
+  hype: () => [h("i", { className: "clipbox", style: "top:0;height:80px;background:linear-gradient(#ff6b3d,#7c5cff)" }), h("i", { className: "txt", style: "top:10px;height:6px" }),
+               h("i", { className: "txt", style: "top:36px;left:16px;right:16px;height:8px;border-radius:50%;opacity:.8" })],
 };
-const NAMES = { framed: "Framed", full: "Just the clip", split: "Clip + gameplay" };
+const NAMES = { framed: "Framed", full: "Just the clip", split: "Clip + gameplay", hype: "🔥 Viral edit" };
 const mediaUrl = c => c.media_url + "#t=0.1";
 
 function openEditor(c) {
