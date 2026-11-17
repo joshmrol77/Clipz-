@@ -330,15 +330,20 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         muted = c.muted or {}
         hidden_creators = set(muted.get("creators", []))
         hidden_games = {g.lower() for g in muted.get("games", [])}
+        followed_games = {(g.get("label") or g["name"]).lower() for g in c.games}
         items = []
         for clip in db.by_status(con, "discovered"):
             if not c.wanted_language(clip):
                 continue
+            creator = c.creator_for(clip)
+            from_game = bool(clip.category) and clip.category.lower() in followed_games
+            if not creator and not from_game:
+                continue   # its streamer or game was unfollowed
             game = clip.game or (clip.category if clip.category != "General" else "")
             if creator_key(clip) in hidden_creators or (game and game.lower() in hidden_games):
                 continue
-            creator = c.creator_for(clip)
             items.append({**asdict(clip), "category": c.category_of(clip), "game": game, "key": creator_key(clip),
+                          "followed": bool(creator),
                           "viral": rank.is_viral(clip),
                           "streamer": (creator.name or creator.channel) if creator else clip.creator})
         items.sort(key=lambda x: (x["seen"] == "1", not x["viral"], -(x["heat"] or 0), -x["score"]))
@@ -355,7 +360,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         offset, limit = int(request.args.get("offset", 0)), min(int(request.args.get("limit", 20)), 50)
         items = [x for x in feed_items(c, con)
                  if (not game or x["game"].lower() == game.lower())
-                 and (not creator or x["key"] == creator.lower())
+                 and (not creator or x["key"] == creator.lower() or (creator == "following" and x["followed"]))
                  and (not category or x["category"] == category)
                  and low <= (x["views"] or 0) < high
                  and (request.args.get("viral") != "1" or x["viral"])]
@@ -388,6 +393,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         return jsonify(
             games=[{"name": n, "count": k} for n, k in sorted(games.items(), key=lambda kv: (-kv[1], kv[0].lower()))],
             creators=sorted(creators.values(), key=lambda x: (-x["count"], x["name"].lower()))[:60],
+            following=sum(1 for x in items if x["followed"]),
             views=views, viral=viral)
 
     @app.get("/api/clips/<clip:clip_id>/stream")

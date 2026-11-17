@@ -328,7 +328,9 @@ def test_feed_filters_by_game_and_creator_and_save_hide_seen_work(cloud_app):
     c = config.load("config.toml")
     config.save_settings(c, {"creators": [
         {"platform": "twitch", "channel": "togi", "name": "TOGI", "category": "IRL"},
-        {"platform": "kick", "channel": "speed", "category": "IRL"}]})
+        {"platform": "youtube", "channel": "togi", "name": "TOGI", "category": "IRL"},
+        {"platform": "kick", "channel": "speed", "category": "IRL"}],
+        "games": [{"name": "Grand Theft Auto VI", "label": "GTA 6"}]})
     con = c.connect()
     add = lambda cid, plat, who, game, score, **kw: db.add(con, Clip(
         id=cid, platform=plat, creator=who, credit="x", title=cid, url="u", score=score, game=game, language="en", **kw))
@@ -617,6 +619,7 @@ def test_english_only_keeps_english_clips(cfg):
 
 def test_feed_hides_non_english_clips_already_found(cloud_app):
     client, _, base = cloud_app
+    config.save_settings(config.load("config.toml"), {"creators": [{"platform": "twitch", "channel": "x"}]})
     con = config.load("config.toml").connect()
     db.add(con, clip("en", language="en"))
     db.add(con, clip("pt", language="pt"))
@@ -651,6 +654,7 @@ def test_clip_actions_work_when_the_host_passes_the_path_still_encoded(cloud_app
 
 def test_feed_view_ranges(cloud_app):
     client, _, base = cloud_app
+    config.save_settings(config.load("config.toml"), {"creators": [{"platform": "twitch", "channel": "x"}]})
     con = config.load("config.toml").connect()
     for i, views in enumerate((40, 100, 999, 5000, 250000)):
         db.add(con, clip(str(i), views=views, score=10 - i))
@@ -675,6 +679,7 @@ def test_heat_finds_breakout_clips_and_viral_filter(cloud_app):
     assert rank.is_viral(clip("boom", views=60000, created_at=ago(3)), now)          # exploding on its own
 
     client, _, base = cloud_app
+    config.save_settings(config.load("config.toml"), {"creators": [{"platform": "twitch", "channel": "x"}]})
     con = config.load("config.toml").connect()
     for c in group:
         db.add(con, c)
@@ -682,3 +687,19 @@ def test_heat_finds_breakout_clips_and_viral_filter(cloud_app):
     assert feed[0]["id"] == "twitch:hot" and feed[0]["viral"] is True               # hottest first
     assert [x["id"] for x in client.get("/api/feed?viral=1", **base).get_json()["clips"]] == ["twitch:hot"]
     assert client.get("/api/feed/filters", **base).get_json()["viral"] == 1
+
+
+def test_feed_only_shows_what_you_follow(cloud_app):
+    client, _, base = cloud_app
+    c = config.load("config.toml")
+    config.save_settings(c, {"creators": [{"platform": "twitch", "channel": "speed"}],
+                             "games": [{"name": "Fortnite", "label": "Fortnite"}]})
+    con = c.connect()
+    db.add(con, clip("mine", creator="speed", score=3))
+    db.add(con, clip("game", creator="randomguy", category="Fortnite", score=2))
+    db.add(con, clip("gone", creator="oldstreamer", score=5))                       # unfollowed streamer
+    db.add(con, clip("oldgame", creator="x2", category="Minecraft", score=4))       # unfollowed game
+    get = lambda q="": [x["id"] for x in client.get("/api/feed" + q, **base).get_json()["clips"]]
+    assert get() == ["twitch:mine", "twitch:game"]
+    assert get("?creator=following") == ["twitch:mine"]
+    assert client.get("/api/feed/filters", **base).get_json()["following"] == 1

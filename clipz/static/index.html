@@ -595,8 +595,9 @@ async function openFilter(kind) {
        ...(data.views || []).map(v => h("button", { on: { click: () => pick(v.range) } }, `${VIEW_NAMES[v.range]} views  ·  ${v.count}`))]
     : kind === "game"
     ? data.games.map(g => h("button", { on: { click: () => pick(g.name) } }, `${g.name}${g.count ? "  ·  " + g.count : ""}`))
-    : data.creators.map(c => h("button", { on: { click: () => pick(c.key, c.name) } },
-        h("span", { className: "plat " + c.platform, style: "margin-right:8px" }, c.platform), `${c.name}${c.count ? "  ·  " + c.count : ""}`));
+    : [h("button", { on: { click: () => pick("following", "Following") } }, `Streamers I follow  ·  ${data.following || 0}`),
+       ...data.creators.map(c => h("button", { on: { click: () => pick(c.key, c.name) } },
+        h("span", { className: "plat " + c.platform, style: "margin-right:8px" }, c.platform), `${c.name}${c.count ? "  ·  " + c.count : ""}`))];
   d.replaceChildren(
     h("h3", {}, { game: "Show clips from game", creator: "Show clips from creator", views: "Show clips with views" }[kind]),
     h("button", { on: { click: () => pick("", "") } }, { game: "All games", creator: "All creators", views: "Any number of views" }[kind]),
