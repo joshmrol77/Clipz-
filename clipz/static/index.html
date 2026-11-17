@@ -849,7 +849,7 @@ function renderStreamers() {
     h("ul", { className: "list" }, hiddenRows.map(([kind, v]) => h("li", {},
       h("span", {}, labels[v] || v), h("span", { className: "badge" }, kind === "creator" ? v.split(":")[0] : "game"),
       h("button", { on: { click: () => api("DELETE", "/api/mute", { kind, value: v }) } }, "Unhide"))))) : null;
-  $("streamers").replaceChildren(gamesPanel(), h("div", { className: "panel" },
+  $("streamers").replaceChildren(examplePanel(), gamesPanel(), h("div", { className: "panel" },
     h("h2", {}, "Streamers to clip"),
     h("p", { className: "muted" }, "Clipz only looks at channels on this list. Stick to creators who run a clipping program or have said it's OK - posting footage without permission gets channels struck."),
     h("div", { className: "row" }, platform, h("div", { className: "suggest-wrap" }, channel, menu)),
@@ -860,6 +860,36 @@ function renderStreamers() {
       h("h3", { className: "cat-head" }, cat),
       h("div", { className: "pills3" }, S.creators.filter(c => c.category === cat).map(c => streamerPill(c, game)))])
       : h("p", { className: "muted", style: "margin-top:14px" }, "No streamers yet.")), similarPanel(), hiddenPanel);
+}
+
+// ---- Learn from an example clip -------------------------------------------------------------
+let lastExample = null;
+function examplePanel() {
+  const input = h("input", { type: "url", placeholder: "Paste a YouTube Short or TikTok link", on: { input: () => dirty = true } });
+  const look = async () => {
+    const url = input.value.trim();
+    if (!url) return;
+    const r = await fetch("/api/examples", { method: "POST", headers: { "Content-Type": "application/json", "X-Clipz": "1" }, body: JSON.stringify({ url }) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return toast(data.error || "Couldn't read that link");
+    lastExample = data.example; dirty = false; renderStreamers();
+  };
+  const ex = lastExample;
+  const follow = async () => {
+    const handle = (ex.channel_url || "").split("/").pop();
+    if (await api("POST", "/api/creators", { platform: "youtube", channel: handle && handle.startsWith("@") ? handle : ex.channel_url,
+                                             name: ex.channel, category: "Examples", all_content: true })) toast(`Following ${ex.channel}`);
+  };
+  return h("div", { className: "panel" },
+    h("h2", {}, "Learn from an example"),
+    h("p", { className: "muted" }, "Paste a clip you'd love to post. Clipz reads who made it and what it's about, so you can follow the channel and find more like it."),
+    h("div", { className: "row" }, input, h("button", { className: "primary", on: { click: look } }, "Look up")),
+    ex ? h("div", { className: "row", style: "margin-top:12px;align-items:flex-start" },
+      ex.image ? h("img", { src: ex.image, alt: "", style: "width:96px;border-radius:8px;flex:none" }) : null,
+      h("div", { style: "flex:1;min-width:0" },
+        h("div", { className: "title", style: "font-weight:600;overflow-wrap:anywhere" }, ex.title || "(no title)"),
+        h("div", { className: "muted" }, [ex.channel, ex.platform, ex.game].filter(Boolean).join(" · ")),
+        ex.platform === "youtube" && ex.channel ? h("button", { style: "margin-top:8px", on: { click: follow } }, `+ Follow ${ex.channel}`) : null)) : null);
 }
 
 // ---- Followed streamers as pills; tap for options, ✕ to remove --------------------------------

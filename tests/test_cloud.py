@@ -738,3 +738,21 @@ def test_similar_streamers_from_the_games_your_streamers_play(cloud_app, monkeyp
     n = len(asked)
     client.get("/api/similar", **base)
     assert len(asked) == n                                                  # cached
+
+
+def test_learn_from_an_example_link(cloud_app, monkeypatch):
+    client, _, base = cloud_app
+    from clipz import app as appmod
+    asked = {}
+
+    class Reply:
+        def raise_for_status(self): pass
+        def json(self): return {"title": "Speed RAGES at GTA 6 😭", "author_name": "SpeedClips", "author_url": "https://www.youtube.com/@SpeedClips",
+                                "thumbnail_url": "https://i.ytimg.com/vi/x/hq.jpg"}
+    monkeypatch.setattr(appmod.requests, "get", lambda url, params=None, timeout=None: asked.update(url=url, params=params) or Reply())
+    config.save_settings(config.load("config.toml"), {"games": [{"name": "Grand Theft Auto VI", "label": "GTA 6"}]})
+    post = lambda body: client.post("/api/examples", data=json.dumps(body), content_type="application/json", headers={"X-Clipz": "1"}, **base)
+    assert post({"url": "https://example.com/x"}).status_code == 400
+    ex = post({"url": "https://youtube.com/shorts/qEd59WIhsYA?is=abc"}).get_json()["example"]
+    assert asked["url"] == "https://www.youtube.com/oembed" and asked["params"]["url"] == "https://youtube.com/shorts/qEd59WIhsYA"
+    assert (ex["channel"], ex["platform"], ex["game"]) == ("SpeedClips", "youtube", "GTA 6")

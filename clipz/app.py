@@ -349,6 +349,35 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         items.sort(key=lambda x: (x["seen"] == "1", not x["viral"], -(x["heat"] or 0), -x["score"]))
         return items
 
+    @app.post("/api/examples")
+    def add_example():
+        """Learn from an example clip: look up a YouTube/TikTok link's title, channel and picture
+        (their public oEmbed info) and remember it."""
+        url = (request.get_json().get("url") or "").strip()
+        host = urlparse(url).netloc.lower()
+        if "youtube.com" in host or "youtu.be" in host:
+            api_url = "https://www.youtube.com/oembed"
+        elif "tiktok.com" in host:
+            api_url = "https://www.tiktok.com/oembed"
+        else:
+            return jsonify(error="Paste a YouTube or TikTok link."), 400
+        clean = url.split("?")[0] if "youtube.com/shorts/" in url else url
+        try:
+            r = requests.get(api_url, params={"url": clean, "format": "json"}, timeout=15)
+            r.raise_for_status()
+            info = r.json()
+        except Exception as e:
+            return jsonify(error=f"Couldn't read that link ({str(e)[:120]})."), 400
+        c = cfg()
+        example = {"url": clean, "title": info.get("title", ""), "channel": info.get("author_name", ""),
+                   "channel_url": info.get("author_url", ""), "image": info.get("thumbnail_url", ""),
+                   "platform": "tiktok" if "tiktok" in api_url else "youtube",
+                   "game": c.infer_game(info.get("title", "")), "at": time.time()}
+        examples = [e for e in db.kv_get(c.connect(), "examples", []) if e["url"] != clean][-19:] + [example]
+        db.kv_set(c.connect(), "examples", examples)
+        print(f"EXAMPLE CLIP: {example}", flush=True)   # so the clip style can be reviewed in the logs
+        return jsonify(example=example)
+
     @app.get("/api/similar")
     def similar():
         """Streamers like the ones you follow: live in the games your streamers' clips are from."""
