@@ -38,6 +38,7 @@
   input, select { font: inherit; background: var(--bg); color: var(--text); border: 1px solid var(--line);
                   border-radius: 8px; padding: 8px 10px; min-width: 0; }
   input[type=checkbox] { width: 18px; height: 18px; }
+  input, select, textarea { font-size: 16px; }   /* smaller text makes iPhones zoom in when a box is tapped */
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
   .panel h2 { margin: 0 0 4px; font-size: 16px; }
   .muted { color: var(--muted); font-size: 13px; }
@@ -442,7 +443,7 @@ function reel(c) {
       h("div", { className: "sub" }, trend(c), [c.game, `${compact(c.views)} views`, ago(c.created_at), c.uploader ? "clip by " + c.uploader : ""].filter(Boolean).join(" · "))),
     h("div", { className: "actions" },
       h("button", { className: "act post", on: { click: () => openPost(c, el) } }, h("span", { className: "ic hot" }, icon("post")), "Post"),
-      h("button", { className: "act save", on: { click: () => openPost(c, el, true) } }, h("span", { className: "ic" }, icon("save")), "Save"),
+      h("button", { className: "act save", on: { click: () => quickSave(c, el) } }, h("span", { className: "ic" }, icon("save")), "Save"),
       h("button", { className: "act", on: { click: () => lessLikeThis(c, el) } }, h("span", { className: "ic" }, icon("less")), "Hide"),
       h("a", { className: "act", href: c.url, target: "_blank", rel: "noopener" }, h("span", { className: "ic" }, icon("open")), "Open")));
   el._clip = c; el._stage = stage;
@@ -499,6 +500,18 @@ function trend(c) {
   return h("span", { className: "trend" }, `🔥 ${compact(Math.round(perHour))}/hr  `);
 }
 
+async function quickSave(c, el) {
+  const btn = el.querySelector(".act.save");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const r = await fetch(`/api/clips/${encodeURIComponent(c.id)}/keep`, { method: "POST",
+    headers: { "Content-Type": "application/json", "X-Clipz": "1" }, body: "{}" });
+  if (!r.ok) { btn.disabled = false; return toast((await r.json().catch(() => ({}))).error || "Couldn't save that clip"); }
+  btn.classList.add("done"); btn.querySelector(".ic").replaceChildren(icon("saved"));
+  toast("Saved to Publishing");
+  setTimeout(() => dropReels(x => x.id === c.id, el), 600);
+}
+
 function openPost(c, el, saveOnly = false) {
   const d = $("sheet");
   const connected = ["youtube", "tiktok", "instagram"].filter(n => S.accounts[n]);
@@ -521,7 +534,7 @@ function openPost(c, el, saveOnly = false) {
     dropReels(x => x.id === c.id, el);
   };
   d.replaceChildren(
-    h("h3", {}, saveOnly ? "Save for later" : "Post this clip"),
+    h("h3", { tabIndex: -1, autofocus: true }, saveOnly ? "Save for later" : "Post this clip"),
     h("label", { className: "field" }, "Headline", title),
     h("div", { className: "muted", style: "font-size:13px" }, "Format"),
     tiles,
@@ -988,6 +1001,12 @@ for (const d of [$("sheet"), $("editor")]) {
     if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close();
   });
 }
+// Opening a sheet must not select a text box (that pops the keyboard and zooms the page).
+const _showModal = HTMLDialogElement.prototype.showModal;
+HTMLDialogElement.prototype.showModal = function () {
+  _showModal.call(this);
+  if (document.activeElement && document.activeElement.matches("input, textarea, select")) document.activeElement.blur();
+};
 new MutationObserver(() => {
   const d = $("sheet");
   if (d.open && !d.querySelector(":scope > .x")) d.prepend(h("button", { className: "x", "aria-label": "Close", on: { click: () => d.close() } }, "✕"));
