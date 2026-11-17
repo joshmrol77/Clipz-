@@ -142,6 +142,22 @@
               text-align: center; font-size: 16px; line-height: 34px; }
   .sheet button { text-align: left; padding: 13px 14px; font-size: 15px; }
   .sheet h3 { margin: 4px 0 6px; font-size: 15px; }
+  .pills3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px; margin-top: 12px; }
+  .pill2 { position: relative; display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; height: 38px;
+           padding: 0 6px; border-radius: 19px; background: var(--bg); border: 1px solid var(--line); cursor: pointer; }
+  .pill2 .nm { min-width: 0; font-size: 12.5px; letter-spacing: -.1px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pill2 .px { position: absolute; top: -7px; right: -5px; width: 20px; height: 20px; padding: 0; border-radius: 50%;
+               border: 1px solid var(--bg); background: #3a4050; color: var(--text); font-size: 10px; line-height: 18px; text-align: center; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--muted); }
+  @media (max-width: 430px) { main { padding-left: 12px; padding-right: 12px; } .panel { padding: 14px 12px; } }
+  .dot.twitch { background: #9146ff; } .dot.kick { background: #53fc18; } .dot.youtube { background: #ff0033; }
+  .similar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+  .sim { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; min-width: 0;
+         background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 6px; }
+  .sim img, .sim .noimg { width: 52px; height: 52px; border-radius: 50%; background: var(--line); object-fit: cover; }
+  .sim .nm { font-weight: 700; font-size: 14px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sim .sub { font-size: 11px; line-height: 1.3; max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .sim button { padding: 5px 10px; font-size: 13px; margin-top: 2px; }
   .cat-head { margin: 18px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
   .suggest-wrap { position: relative; flex: 1 1 220px; min-width: 0; display: flex; }
   .suggest-wrap > input { flex: 1; min-width: 0; }
@@ -842,13 +858,59 @@ function renderStreamers() {
     h("div", { className: "row", style: "margin-top:10px" }, tags, h("button", { className: "primary", on: { click: add } }, "Add")),
     S.creators.length ? cats.flatMap(cat => [
       h("h3", { className: "cat-head" }, cat),
-      h("ul", { className: "list" }, S.creators.filter(c => c.category === cat).map(c =>
-        h("li", {}, h("span", {}, c.name || c.channel, c.hashtags.length ? h("span", { className: "muted" }, "  #" + c.hashtags.join(" #")) : null),
-          game ? h("button", { className: "badge", title: "Tap to switch", on: { click: () => api("POST", "/api/creators/toggle", c) } },
-            c.all_content ? "All clips" : game + " only") : h("span", { className: "badge" }, "All clips"),
-          h("span", { className: "badge" }, c.platform),
-          h("button", { className: "ghost-bad", on: { click: () => api("DELETE", "/api/creators", c) } }, "Remove"))))])
-      : h("p", { className: "muted", style: "margin-top:14px" }, "No streamers yet.")), hiddenPanel);
+      h("div", { className: "pills3" }, S.creators.filter(c => c.category === cat).map(c => streamerPill(c, game)))])
+      : h("p", { className: "muted", style: "margin-top:14px" }, "No streamers yet.")), similarPanel(), hiddenPanel);
+}
+
+// ---- Followed streamers as pills; tap for options, ✕ to remove --------------------------------
+function streamerPill(c, game) {
+  const remove = e => { e.stopPropagation(); if (confirm(`Stop following ${c.name || c.channel}?`)) api("DELETE", "/api/creators", c); };
+  const options = () => {
+    const d = $("sheet");
+    d.replaceChildren(
+      h("h3", { tabIndex: -1 }, c.name || c.channel),
+      h("div", { className: "muted", style: "font-size:13px" }, `${c.platform} · ${c.category}${c.hashtags.length ? " · #" + c.hashtags.join(" #") : ""}`),
+      game ? h("button", { on: { click: () => { d.close(); api("POST", "/api/creators/toggle", c); } } },
+        c.all_content ? `Only show their ${game} clips` : "Show all their clips") : null,
+      h("button", { className: "ghost-bad", on: { click: e => { d.close(); remove(e); } } }, "Stop following"),
+      h("button", { on: { click: () => d.close() } }, "Cancel"));
+    d.showModal();
+  };
+  return h("div", { className: "pill2", title: c.platform, on: { click: options } },
+    h("span", { className: "dot " + c.platform }),
+    h("span", { className: "nm" }, c.name || c.channel),
+    h("button", { className: "px", "aria-label": "Remove " + (c.name || c.channel), on: { click: remove } }, "✕"));
+}
+
+// ---- Similar streamers: live now in the games your streamers' clips are from ------------------
+let similarCache = { at: 0, results: null, loading: false };
+function similarPanel() {
+  const box = h("div", { className: "panel" }, h("h2", {}, "Similar streamers"));
+  if (!S.creators.length) return null;
+  if (!S.accounts.twitch) { box.append(h("p", { className: "muted" }, "Connect Twitch in Settings to see suggestions.")); return box; }
+  const stale = Date.now() - similarCache.at > 5 * 60 * 1000;
+  if ((stale || !similarCache.results) && !similarCache.loading) {
+    similarCache.loading = true;
+    fetch("/api/similar").then(r => r.json()).then(d => { similarCache = { at: Date.now(), results: d.results || [], loading: false }; if (tab === "streamers" && !dirty) renderStreamers(); })
+      .catch(() => { similarCache.loading = false; });
+  }
+  const list = similarCache.results;
+  box.append(h("p", { className: "muted" }, "English streamers live now in the games your streamers play, most watched first."));
+  if (!list) { box.append(h("p", { className: "muted" }, "Looking…")); return box; }
+  if (!list.length) { box.append(h("p", { className: "muted" }, "No suggestions yet - they appear once your streamers have some clips.")); return box; }
+  box.append(h("div", { className: "similar" }, list.map(x => h("div", { className: "sim" },
+    x.image ? h("img", { src: x.image, alt: "", loading: "lazy" }) : h("span", { className: "noimg" }),
+    h("div", { className: "nm" }, x.name),
+    h("div", { className: "muted sub" }, `${x.game} · ${compact(x.viewers)} watching`),
+    h("button", { className: "primary", on: { click: async () => {
+      const cat = (S.creators.find(c => c.platform === "twitch") || {}).category || "";
+      if (await api("POST", "/api/creators", { platform: "twitch", channel: x.login, name: x.name, category: cat, all_content: true })) {
+        similarCache.results = similarCache.results.filter(r => r.login !== x.login);
+        toast(`Following ${x.name}`);
+        renderStreamers();
+      }
+    } } }, "+ Follow")))));
+  return box;
 }
 
 // ---- Games & categories: follow a game, get the most-viewed clips from everyone playing it ----

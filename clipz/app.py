@@ -349,6 +349,34 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         items.sort(key=lambda x: (x["seen"] == "1", not x["viral"], -(x["heat"] or 0), -x["score"]))
         return items
 
+    @app.get("/api/similar")
+    def similar():
+        """Streamers like the ones you follow: live in the games your streamers' clips are from."""
+        c = cfg()
+        if not (c.twitch.get("client_id") and c.twitch.get("client_secret")) or not c.creators:
+            return jsonify(results=[])
+        con = c.connect()
+        followed = {(x.platform, x.channel.lower()) for x in c.creators}
+        counts = {}
+        for clip in db.all_clips(con):
+            if (clip.platform, clip.creator.lower()) in followed and clip.game:
+                counts[clip.game] = counts.get(clip.game, 0) + 1
+        label_to_name = {(g.get("label") or g["name"]): g["name"] for g in c.games}
+        games = [label_to_name.get(g, g) for g, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:4]]
+        if not games:
+            games = [g["name"] for g in c.games[:4]]
+        exclude = {ch for p, ch in followed if p == "twitch"}
+        key = "|".join(games) + "#" + ",".join(sorted(exclude))
+        cached = db.kv_get(con, "similar")
+        if cached and cached.get("key") == key and time.time() - cached["at"] < 1800:
+            return jsonify(results=cached["results"])
+        try:
+            results = twitch_source.similar_streamers(c, games, exclude)
+        except Exception as e:
+            return jsonify(results=[], error=str(e)[:200])
+        db.kv_set(con, "similar", {"key": key, "at": time.time(), "results": results})
+        return jsonify(results=results)
+
     @app.get("/api/feed")
     @app.get("/api/browse")
     def feed():

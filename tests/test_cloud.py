@@ -703,3 +703,38 @@ def test_feed_only_shows_what_you_follow(cloud_app):
     assert get() == ["twitch:mine", "twitch:game"]
     assert get("?creator=following") == ["twitch:mine"]
     assert client.get("/api/feed/filters", **base).get_json()["following"] == 1
+
+
+def test_similar_streamers_from_the_games_your_streamers_play(cloud_app, monkeypatch):
+    client, _, base = cloud_app
+    from clipz.sources import twitch
+    c = config.load("config.toml")
+    config.save_settings(c, {"twitch": {"client_id": "cid", "client_secret": "s"},
+                             "creators": [{"platform": "twitch", "channel": "speed"}]})
+    con = c.connect()
+    db.add(con, clip("a", creator="speed", game="Just Chatting"))
+    db.add(con, clip("b", creator="speed", game="Just Chatting"))
+    db.add(con, clip("c", creator="speed", game="Fortnite"))
+    asked = []
+
+    def fake_get(s, path, **p):
+        asked.append((path, p))
+        if path == "games":
+            return [{"id": "1", "name": "Just Chatting"}, {"id": "2", "name": "Fortnite"}]
+        if path == "streams":
+            return {"1": [{"user_login": "Kai", "user_name": "Kai", "viewer_count": 40000, "game_name": "Just Chatting"},
+                          {"user_login": "speed", "user_name": "Speed", "viewer_count": 90000}],
+                    "2": [{"user_login": "bugha", "user_name": "Bugha", "viewer_count": 9000, "game_name": "Fortnite"}]}[p["game_id"]]
+        if path == "users":
+            return [{"login": "kai", "profile_image_url": "k.png"}]
+        return []
+    monkeypatch.setattr(twitch, "_session", lambda cfg: None)
+    monkeypatch.setattr(twitch, "_get", fake_get)
+    res = client.get("/api/similar", **base).get_json()["results"]
+    assert [r["login"] for r in res] == ["kai", "bugha"]                    # already-followed speed left out
+    assert res[0]["image"] == "k.png" and res[0]["game"] == "Just Chatting"
+    assert asked[0] == ("games", {"name": ["Just Chatting", "Fortnite"]})    # most-clipped game first
+    assert all(p.get("language") == "en" for path, p in asked if path == "streams")
+    n = len(asked)
+    client.get("/api/similar", **base)
+    assert len(asked) == n                                                  # cached

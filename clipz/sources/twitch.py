@@ -89,6 +89,26 @@ def search_categories(cfg: Config, query: str, limit: int = 8) -> list[dict]:
             for d in _get(_session(cfg), "search/categories", query=query, first=limit)]
 
 
+def similar_streamers(cfg: Config, game_names: list[str], exclude: set[str], limit: int = 12) -> list[dict]:
+    """English streamers live right now in the same games, most watched first."""
+    s = _session(cfg)
+    games = _get(s, "games", name=game_names[:10]) if game_names else []
+    found = {}
+    for g in games:
+        for st in _get(s, "streams", game_id=g["id"], language="en", first=20):
+            login = st["user_login"].lower()
+            if login in exclude or login in found:
+                continue
+            found[login] = {"login": login, "name": st["user_name"], "game": st.get("game_name") or g["name"],
+                            "viewers": st.get("viewer_count", 0), "image": ""}
+    top = sorted(found.values(), key=lambda x: -x["viewers"])[:limit]
+    if top:
+        pics = {u["login"]: u.get("profile_image_url", "") for u in _get(s, "users", login=[x["login"] for x in top])}
+        for x in top:
+            x["image"] = pics.get(x["login"], "")
+    return top
+
+
 def _window(cfg: Config) -> tuple[datetime, str, str]:
     now = datetime.now(timezone.utc)
     fmt = "%Y-%m-%dT%H:%M:%SZ"
