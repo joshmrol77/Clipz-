@@ -367,10 +367,31 @@ function videoPlayer(c, src) {
 }
 
 function embedPlayer(c) {
+  const yt = /youtube\.com\/embed\//.test(c.preview || "");
   const url = c.platform === "twitch" ? `${c.preview}&parent=${location.hostname}&autoplay=true&muted=true`
-    : c.preview + (c.preview.includes("?") ? "&" : "?") + "autoplay=1&mute=1&playsinline=1&controls=0&loop=1";
-  return h("iframe", { src: url, allow: "autoplay; fullscreen; encrypted-media; picture-in-picture", allowFullscreen: true });
+    : c.preview + (c.preview.includes("?") ? "&" : "?") + "autoplay=1&mute=1&playsinline=1&loop=1"
+      + (yt ? `&controls=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}` : "&controls=0");
+  const frame = h("iframe", { src: url, allow: "autoplay; fullscreen; encrypted-media; picture-in-picture", allowFullscreen: true });
+  if (yt) {
+    frame.classList.add("yt");
+    // Browsers only autoplay muted; turn the sound on as soon as the player is ready (sound is on by default).
+    frame.addEventListener("load", () => { for (const ms of [400, 1200, 2500]) setTimeout(() => ytSound(frame), ms); });
+  }
+  return frame;
 }
+
+function ytCommand(frame, func, args = []) {
+  try { frame.contentWindow.postMessage(JSON.stringify({ event: "command", func, args }), "*"); } catch {}
+}
+function ytSound(frame) {
+  if (!soundOn || !frame.isConnected) return;
+  ytCommand(frame, "unMute"); ytCommand(frame, "setVolume", [100]); ytCommand(frame, "playVideo");
+}
+// Any tap on the page counts as permission for sound: unmute the YouTube clip on screen too.
+for (const ev of ["touchend", "click"]) document.addEventListener(ev, () => {
+  const f = feed.active && feed.active.querySelector("iframe.yt");
+  if (f) ytSound(f);
+}, { passive: true });
 
 async function mountPlayer(el) {
   const c = el._clip;
