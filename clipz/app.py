@@ -577,7 +577,37 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             fields["layout"] = body["layout"]
         if (body.get("title") or "").strip():
             fields["title"] = body["title"].strip()[:200]
+        if "spoiler" in body:
+            fields["spoiler"] = "1" if body["spoiler"] else ""
         return fields, None
+
+    @app.get("/api/scoreboard.csv")
+    def scoreboard():
+        """Every post that went out, in the page's scoreboard columns. Metrics stay blank
+        for you to fill at 12h/24h/72h - never guessed."""
+        import csv, io
+        from datetime import datetime as _dt
+        con = cfg().connect()
+        cols = ["post_id", "date", "time", "platform", "pillar", "format", "hook", "length_sec", "credit",
+                "views_12h", "views_24h", "views_72h", "likes", "reposts_or_shares", "replies_or_comments",
+                "saves_or_bookmarks", "followers_at_read", "test_name", "notes"]
+        out = io.StringIO()
+        w = csv.writer(out)
+        w.writerow(cols)
+        for p in db.all_posts(con):
+            clip = db.get(con, p["clip_id"])
+            if not clip:
+                continue
+            when = _dt.fromtimestamp(float(p["at"] or 0)).astimezone() if p["at"] else None
+            w.writerow([p["ref"], when.strftime("%Y-%m-%d") if when else "", when.strftime("%H:%M") if when else "",
+                        p["platform"], "Gameplay clips", clip.layout or c_layout(),
+                        db.hook(clip), round(min(clip.duration or 0, cfg().max_duration)) or "", db.credit_tag(clip)]
+                       + [""] * 10)
+        return app.response_class(out.getvalue(), mimetype="text/csv",
+                                  headers={"Content-Disposition": "attachment; filename=scoreboard.csv"})
+
+    def c_layout():
+        return cfg().render.get("layout", "framed")
 
     @app.post("/api/clips/<clip:clip_id>/post")
     def post_clip(clip_id):

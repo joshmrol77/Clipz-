@@ -17,7 +17,7 @@ import requests
 
 from . import tokens
 from ..config import Config
-from ..db import Clip, credit_line
+from ..db import Clip, credit_tag, hook
 
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 NAME = "youtube"
@@ -27,14 +27,14 @@ UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 
 
 def metadata(clip: Clip, hashtags: list[str], gaming: bool = True) -> dict:
-    tags = " ".join(f"#{t.lstrip('#')}" for t in ["Shorts", *hashtags])
-    title = clip.title.strip()
+    tags = " ".join(f"#{t.lstrip('#')}" for t in ["Shorts", *hashtags[:4]])
+    title = hook(clip)
     room = 100 - len(" #Shorts")  # YouTube titles max out at 100 chars
     if len(title) > room:
         title = title[: room - 1].rstrip() + "…"
     return {
         "title": f"{title} #Shorts",
-        "description": f"Clip credit: {credit_line(clip)}\nOriginal: {clip.url}\n\n{tags}",
+        "description": f"{credit_tag(clip)}\nOriginal: {clip.url}\n\n{tags}",
         "tags": [t.lstrip("#") for t in hashtags],
         "categoryId": "20" if gaming else "24",  # Gaming / Entertainment
     }

@@ -55,6 +55,7 @@ class Clip:
     seen: str = ""          # "1" once it has been shown in the feed
     language: str = ""      # e.g. "en", when the platform says
     heat: float = 0.0       # how many times faster than a typical clip from the same streamer/game it's gaining views
+    spoiler: str = ""       # "1" = story spoiler: captions start with SPOILER
 
 
 COLUMNS = list(Clip.__dataclass_fields__)
@@ -112,6 +113,10 @@ def connect(target: str | Path):
         con.execute("CREATE TABLE IF NOT EXISTS log (id INTEGER PRIMARY KEY AUTOINCREMENT, at, msg)")
     con.execute("CREATE TABLE IF NOT EXISTS posts (clip_id TEXT, platform TEXT, ref TEXT, error TEXT, "
                 "PRIMARY KEY (clip_id, platform))")
+    if getattr(con, "dialect", "") == "postgres":
+        con.execute("ALTER TABLE posts ADD COLUMN IF NOT EXISTS at DOUBLE PRECISION DEFAULT NULL")
+    elif "at" not in {r["name"] for r in con.execute("PRAGMA table_info(posts)")}:
+        con.execute("ALTER TABLE posts ADD COLUMN at DEFAULT NULL")
     con.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT)")
     con.execute("CREATE TABLE IF NOT EXISTS locks (name TEXT PRIMARY KEY, holder TEXT, label TEXT, "
                 "expires DOUBLE PRECISION)")
@@ -124,10 +129,29 @@ def credit_line(clip: Clip) -> str:
     return f"{clip.credit} (clip via {clip.uploader})" if clip.uploader else clip.credit
 
 
+PLATFORM_NAMES = {"twitch": "Twitch", "kick": "Kick", "youtube": "YouTube"}
+
+
+def credit_tag(clip: Clip) -> str:
+    """The credit on its own line, page style: "🎥 @creator on Twitch" (+ the clipper, if different)."""
+    if clip.credit and "/" not in clip.credit and "." not in clip.credit:
+        line = f"🎥 {clip.credit}"          # a credit you wrote yourself for this streamer
+    else:
+        who = (clip.creator or clip.credit.rsplit("/", 1)[-1]).lstrip("@")
+        line = f"🎥 @{who} on {PLATFORM_NAMES.get(clip.platform, clip.platform)}"
+    return f"{line} (clip via @{clip.uploader.lstrip('@')})" if clip.uploader else line
+
+
+def hook(clip: Clip) -> str:
+    """The caption's first line: the headline, with SPOILER in front of story spoilers."""
+    title = clip.title.strip()
+    return f"SPOILER: {title}" if clip.spoiler and not title.upper().startswith("SPOILER") else title
+
+
 def _clip(row) -> Clip:
     data = dict(row)
     for c in ("src_path", "out_path", "published_url", "error", "layout", "background",
-              "thumbnail", "preview", "uploader", "category", "game", "approve", "seen", "autopost", "language"):
+              "thumbnail", "preview", "uploader", "category", "game", "approve", "seen", "autopost", "language", "spoiler"):
         data[c] = data.get(c) or ""
     try:
         data["heat"] = float(data.get("heat") or 0)
@@ -186,9 +210,16 @@ def prune(con, before_iso: str) -> int:
 
 
 def record_post(con, clip_id: str, platform: str, ref: str = "", error: str = "") -> None:
-    con.execute("INSERT INTO posts VALUES (?, ?, ?, ?) ON CONFLICT (clip_id, platform) "
-                "DO UPDATE SET ref = excluded.ref, error = excluded.error", (clip_id, platform, ref, error))
+    con.execute("INSERT INTO posts (clip_id, platform, ref, error, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (clip_id, platform) "
+                "DO UPDATE SET ref = excluded.ref, error = excluded.error, at = excluded.at",
+                (clip_id, platform, ref, error, time.time()))
     con.commit()
+
+
+def all_posts(con) -> list[dict]:
+    """Every successful post, oldest first, for the scoreboard."""
+    rows = con.execute("SELECT clip_id, platform, ref, at FROM posts WHERE ref IS NOT NULL AND ref <> '' ORDER BY at, clip_id")
+    return [dict(r) for r in rows]
 
 
 def posts(con, clip_id: str) -> dict[str, dict]:

@@ -181,7 +181,7 @@ def test_instagram_connect_and_reel_upload_sequence(tmp_path, monkeypatch):
     def post(url, data=None, headers=None, **kw):
         calls.append(("POST", url))
         if url.endswith("/42/media"):
-            assert data["media_type"] == "REELS" and "twitch.tv/x" in data["caption"]
+            assert data["media_type"] == "REELS" and "🎥 @x on Twitch" in data["caption"]
             return Reply({"id": "CONT"})
         if "rupload" in url:
             assert headers["file_size"] == "5" and data.read() == b"12345"
@@ -329,3 +329,31 @@ def test_following_only_a_game_still_searches(tmp_path, monkeypatch):
     monkeypatch.setattr(sources, "discover", lambda c, log=print: calls.append(c.games) or [])
     pipeline.discover(cfg, cfg.connect(), log=lambda m: None)
     assert calls and calls[0][0]["name"] == "Grand Theft Auto VI"
+
+
+def test_captions_follow_the_page_rules_and_scoreboard_lists_posts(env):
+    from clipz.publish import instagram, tiktok, youtube
+    client, tmp = env
+    c = Clip(id="twitch:x", platform="twitch", creator="ishowspeed", credit="twitch.tv/ishowspeed",
+             title="THE HIDDEN CAR NOBODY FOUND", url="https://clips.twitch.tv/x", game="Grand Theft Auto VI",
+             duration=24, spoiler="1", uploader="clipper1")
+    cfg = config.load(str(tmp / "config.toml"))
+    tags = cfg.hashtags_for(c)
+    assert tags[0] == "GTA6"
+    ig = instagram.caption(c, tags + ["a", "b", "c"])
+    lines = ig.split("\n")
+    assert lines[0] == "SPOILER: THE HIDDEN CAR NOBODY FOUND"
+    assert lines[2] == "🎥 @ishowspeed on Twitch (clip via @clipper1)"
+    assert ig.count("#") == 5                       # Instagram allows 5 hashtags
+    assert "🎥 @ishowspeed" in tiktok.caption(c, tags)
+    meta = youtube.metadata(c, tags)
+    assert meta["title"].startswith("SPOILER:") and meta["description"].startswith("🎥 @ishowspeed")
+
+    con = cfg.connect()
+    db.add(con, c)
+    db.record_post(con, c.id, "youtube", ref="https://youtu.be/abc")
+    db.record_post(con, c.id, "tiktok", error="boom")
+    r = client.get("/api/scoreboard.csv")
+    rows = r.get_data(as_text=True).strip().splitlines()
+    assert rows[0].startswith("post_id,date,time,platform,pillar,format,hook,length_sec,credit,views_12h")
+    assert len(rows) == 2 and "https://youtu.be/abc" in rows[1] and rows[1].endswith(",,,,,,,,,")

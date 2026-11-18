@@ -28,6 +28,7 @@
   nav button { background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
                color: var(--muted); padding: 10px 14px; }
   nav button.on { color: var(--text); border-bottom-color: var(--accent); }
+  a.button { display: inline-block; text-decoration: none; color: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); }
   button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel);
            color: var(--text); padding: 8px 14px; border-radius: 8px; }
   button:hover { border-color: var(--muted); }
@@ -535,6 +536,7 @@ function openPost(c, el, saveOnly = false) {
   const names = { youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram" };
   let layout = S.settings.layout || "framed";
   const title = h("input", { type: "text", value: c.title || "", maxLength: 200 });
+  const spoiler = h("input", { type: "checkbox", checked: !!c.spoiler });
   const tiles = h("div", { className: "layouts" });
   const paintTiles = () => tiles.replaceChildren(...Object.keys(S.layouts).map(name =>
     h("button", { className: "layout" + (name === layout ? " on" : ""), on: { click: () => { layout = name; paintTiles(); } } },
@@ -542,7 +544,7 @@ function openPost(c, el, saveOnly = false) {
   paintTiles();
   const send = async (action) => {
     const r = await fetch(`/api/clips/${encodeURIComponent(c.id)}/${action}`, { method: "POST",
-      headers: { "Content-Type": "application/json", "X-Clipz": "1" }, body: JSON.stringify({ layout, title: title.value }) });
+      headers: { "Content-Type": "application/json", "X-Clipz": "1" }, body: JSON.stringify({ layout, title: title.value, spoiler: spoiler.checked }) });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) return toast(data.error || "Something went wrong");
     d.close();
@@ -552,7 +554,9 @@ function openPost(c, el, saveOnly = false) {
   };
   d.replaceChildren(
     h("h3", { tabIndex: -1, autofocus: true }, saveOnly ? "Save for later" : "Post this clip"),
-    h("label", { className: "field" }, "Headline", title),
+    h("label", { className: "field" }, "Hook (on screen in the first second, and the caption's first line)", title),
+    h("div", { className: "muted", style: "font-size:12px;margin-top:-4px" }, "Say why to keep watching: \"THE HIDDEN CAR NOBODY FOUND\", \"this NPC reaction 💀\". No spoilers in the hook."),
+    h("label", { className: "check" }, spoiler, "Story spoiler (caption starts with SPOILER)"),
     h("div", { className: "muted", style: "font-size:13px" }, "Format"),
     tiles,
     saveOnly ? null : h("div", { className: "muted", style: "font-size:13px" }, connected.length
@@ -653,7 +657,8 @@ function renderClips() {
       h("button", { className: id === filter ? "on" : "", on: { click: () => { filter = id; renderClips(); } } },
         `${name} (${counts[id] || 0})`)),
     filter === "rendered" && counts.rendered ? h("button", { className: "good", on: { click: approveAll } }, "Post all saved") : null,
-    filter === "failed" && counts.failed ? h("button", { on: { click: () => api("POST", "/api/retry") } }, "Retry failed") : null);
+    filter === "failed" && counts.failed ? h("button", { on: { click: () => api("POST", "/api/retry") } }, "Retry failed") : null,
+    filter === "published" ? h("a", { href: "/api/scoreboard.csv", className: "button", download: "scoreboard.csv" }, "Download scoreboard") : null);
   const shown = S.clips.filter(c => c.status === filter);
   const key = filter + "|" + shown.map(c => c.id + c.status + c.version + c.title + JSON.stringify(c.posts)).join(",");
   const root = $("clips");

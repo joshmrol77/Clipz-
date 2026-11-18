@@ -38,7 +38,7 @@ def test_publish_metadata_credits_creator_and_fits_title_limit():
     clip = Clip(id="a", platform="twitch", creator="x", credit="twitch.tv/x", title="w" * 200, url="http://u")
     m = publish.metadata(clip, ["GTA6"])
     assert len(m["title"]) <= 100 and m["title"].endswith("#Shorts")
-    assert "twitch.tv/x" in m["description"] and "http://u" in m["description"]
+    assert "🎥 @x on Twitch" in m["description"] and "http://u" in m["description"]
 
 
 def test_render_produces_vertical_video(tmp_path):

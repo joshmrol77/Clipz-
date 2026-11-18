@@ -90,7 +90,13 @@ class Config:
 
     def hashtags_for(self, clip) -> list[str]:
         creator = self.creator_for(clip)
-        return (creator.hashtags if creator and creator.hashtags else self.render.get("hashtags", []))
+        tags = creator.hashtags if creator and creator.hashtags else self.render.get("hashtags", [])
+        if tags:
+            return tags
+        game = (getattr(clip, "game", "") or "").lower()
+        if "grand theft auto vi" in game or "gta 6" in game or "gta vi" in game:
+            return ["GTA6", "GTAVI", "GTA", "Gaming"]
+        return ["Gaming"] if game else []
 
     def game_aliases(self) -> list[tuple[str, str]]:
         """(lowercase phrase to look for in titles, followed game's label), longest first."""
