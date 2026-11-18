@@ -318,3 +318,14 @@ def test_youtube_cookies_are_cleaned_checked_used_and_retry_failed_clips(env, mo
     assert "SID\tabc" in got["c"]
     assert post(client, "/api/disconnect/ytcookies").status_code == 200
     assert client.get("/api/state").get_json()["accounts"]["ytcookies"] is False
+
+
+def test_following_only_a_game_still_searches(tmp_path, monkeypatch):
+    from clipz import sources
+    cfg = config.load(str(tmp_path / "config.toml"))
+    config.save_settings(cfg, {"creators": [], "games": [{"name": "Grand Theft Auto VI", "label": "Grand Theft Auto VI"}]})
+    cfg = config.load(str(tmp_path / "config.toml"))
+    calls = []
+    monkeypatch.setattr(sources, "discover", lambda c, log=print: calls.append(c.games) or [])
+    pipeline.discover(cfg, cfg.connect(), log=lambda m: None)
+    assert calls and calls[0][0]["name"] == "Grand Theft Auto VI"

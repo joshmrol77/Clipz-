@@ -10,8 +10,8 @@ from .config import Config
 
 def discover(cfg: Config, con, log=print) -> int:
     """Look for new clips and remember them. Returns how many were new."""
-    if not cfg.creators:
-        log("No streamers on your list yet - add some first.")
+    if not cfg.creators and not cfg.games:
+        log("Nothing followed yet - follow a streamer or a game first.")
         return 0
     log("Looking for new clips...")
     week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
