@@ -145,7 +145,7 @@ def fetch_video(url: str, dest_dir: Path, name: str, max_seconds: int = 180) -> 
     return path
 
 
-def download(clip: Clip, dest_dir: Path, cookies: str = "") -> Path:
+def download(clip: Clip, dest_dir: Path, cookies: str = "", max_seconds: int = 0) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     stem = clip.id.replace(":", "_")
     opts = {
@@ -156,10 +156,14 @@ def download(clip: Clip, dest_dir: Path, cookies: str = "") -> Path:
         "merge_output_format": "mp4",
         "overwrites": True,
         "ffmpeg_location": ffmpeg(),
+        "socket_timeout": 30,
     }
     if clip.start is not None and clip.end is not None:
         opts["download_ranges"] = download_range_func(None, [(clip.start, clip.end)])
         opts["force_keyframes_at_cuts"] = True
+    elif max_seconds and (not clip.duration or clip.duration > max_seconds + 30) and clip.platform not in ("twitch", "kick"):
+        # a long video: only the part that ends up in the edit
+        opts["download_ranges"] = download_range_func(None, [(0, max_seconds + 5)])
     with _cookie_file(cookies) as cookie_path, yt_dlp.YoutubeDL(_with_cookies(opts, cookie_path)) as ydl:
         ydl.download([clip.url])
     path = dest_dir / f"{stem}.mp4"

@@ -41,6 +41,10 @@ def pending(cfg: Config) -> bool:
     return bool(db.kv_get(con, WANT_FIND) or db.by_status(con, "queued", 1) or db.kv_get(con, WANT_PUBLISH))
 
 
+MAX_EDIT_TRIES = 2
+EDITED = "edited"
+
+
 def run(cfg: Config, log, budget: float | None = None) -> str:
     """Do work until done ("done"), out of time ("more"), or another worker has it ("busy")."""
     con, me = cfg.connect(), uuid.uuid4().hex
@@ -51,9 +55,12 @@ def run(cfg: Config, log, budget: float | None = None) -> str:
         while True:
             def label(text: str) -> None:
                 db.lock_refresh(con, LOCK, me, text, TTL)
-            if not step(cfg, con, log, label):
+            did = step(cfg, con, log, label)
+            if not did:
                 return "done"
-            if budget is not None and time.time() - started > budget:
+            # In the cloud each run is cut off after a few minutes: edit one clip per run so a
+            # clip never starts with too little time left.
+            if budget is not None and (did == EDITED or time.time() - started > budget):
                 return "more"
     finally:
         db.lock_release(con, LOCK, me)
@@ -65,6 +72,10 @@ def step(cfg: Config, con, log, label) -> bool:
         db.kv_set(con, "migrated:no_auto_edit", time.time())
         if (n := pipeline.return_auto_edits(con)):
             log(f"Put {n} automatically picked clip(s) back in the feed")
+    if not db.kv_get(con, "migrated:unpicked_youtube"):
+        db.kv_set(con, "migrated:unpicked_youtube", time.time())
+        if (n := pipeline.return_unpicked_youtube(con)):
+            log(f"Put {n} YouTube clip(s) you never picked back in the feed")
     if db.kv_get(con, WANT_FIND):
         db.kv_delete(con, WANT_FIND)
         label("Finding clips")
@@ -76,12 +87,22 @@ def step(cfg: Config, con, log, label) -> bool:
 
     queued = db.by_status(con, "queued", 1)
     if queued:
+        clip = queued[0]
+        tries = db.kv_get(con, f"edit_tries:{clip.id}", 0) + 1
+        if tries > MAX_EDIT_TRIES:   # the edit stopped part-way every time (e.g. the run ran out of time)
+            db.kv_delete(con, f"edit_tries:{clip.id}")
+            db.update(con, clip.id, status="failed",
+                      error="Editing kept stopping part-way through. Try again, or pick a simpler format.")
+            log(f"[{clip.id}] gave up: editing kept stopping part-way")
+            return True
+        db.kv_set(con, f"edit_tries:{clip.id}", tries)
         label("Editing clips")
         pipeline.process(cfg, con, queued, log)
-        done = db.get(con, queued[0].id)
+        db.kv_delete(con, f"edit_tries:{clip.id}")
+        done = db.get(con, clip.id)
         if done.status == "approved" and (cfg.auto_approve or done.autopost == "1"):
             request_publish(cfg)
-        return True
+        return EDITED
 
     want = db.kv_get(con, WANT_PUBLISH)
     if want:

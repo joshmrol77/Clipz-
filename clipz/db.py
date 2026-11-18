@@ -56,6 +56,7 @@ class Clip:
     language: str = ""      # e.g. "en", when the platform says
     heat: float = 0.0       # how many times faster than a typical clip from the same streamer/game it's gaining views
     spoiler: str = ""       # "1" = story spoiler: captions start with SPOILER
+    picked: str = ""        # "1" = you chose this clip (Save, Post, a format change) - never set automatically
 
 
 COLUMNS = list(Clip.__dataclass_fields__)
@@ -152,7 +153,7 @@ def hook(clip: Clip) -> str:
 def _clip(row) -> Clip:
     data = dict(row)
     for c in ("src_path", "out_path", "published_url", "error", "layout", "background",
-              "thumbnail", "preview", "uploader", "category", "game", "approve", "seen", "autopost", "language", "spoiler"):
+              "thumbnail", "preview", "uploader", "category", "game", "approve", "seen", "autopost", "language", "spoiler", "picked"):
         data[c] = data.get(c) or ""
     try:
         data["heat"] = float(data.get("heat") or 0)

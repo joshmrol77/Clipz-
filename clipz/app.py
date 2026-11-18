@@ -563,7 +563,10 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
     def retry():
         con = cfg().connect()
         for clip in db.by_status(con, "failed"):
-            db.update(con, clip.id, status="queued")
+            if pipeline.chosen(clip):          # only clips you picked; others go back to the feed
+                db.update(con, clip.id, status="queued", error="")
+            else:
+                db.update(con, clip.id, status="discovered", error="")
         start_worker()
         return jsonify(started=True)
 
@@ -623,9 +626,9 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             return jsonify(error=error), 400
         reformat = bool(fields) and clip.status in ("rendered", "approved", "rejected")
         if clip.status in ("discovered", "skipped", "failed") or reformat:
-            db.update(con, clip_id, status="queued", approve="1", autopost="1", **fields)
+            db.update(con, clip_id, status="queued", approve="1", autopost="1", picked="1", **fields)
         elif clip.status in ("rendered", "approved", "rejected"):
-            db.update(con, clip_id, status="approved", **fields)
+            db.update(con, clip_id, status="approved", picked="1", **fields)
             worker.request_publish(c)
         else:
             return jsonify(error=f"clip is {clip.status}"), 400
@@ -677,7 +680,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         fields, error = format_choice(c, body, clip)
         if error:
             return jsonify(error=error), 400
-        db.update(con, clip_id, status="queued", approve="", autopost="", **fields)
+        db.update(con, clip_id, status="queued", approve="", autopost="", picked="1", **fields)
         start_worker()
         return jsonify(ok=True)
 
@@ -702,7 +705,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             if background and background not in available:
                 return jsonify(error="That gameplay video no longer exists."), 400
         title = (body.get("title") or clip.title).strip()
-        db.update(con, clip_id, layout=layout, background=background, title=title, status="queued")
+        db.update(con, clip_id, layout=layout, background=background, title=title, status="queued", picked="1")
         start_worker()
         return jsonify(started=True)
 
@@ -752,7 +755,7 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
         allowed, to = moves[action]
         if clip.status not in allowed:
             return jsonify(error=f"clip is already {clip.status}"), 400
-        db.update(con, clip_id, status=to)
+        db.update(con, clip_id, status=to, **({"picked": "1"} if to == "queued" else {}))
         if to == "queued":
             start_worker()
         return jsonify(ok=True)
@@ -850,8 +853,8 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             warning = str(e)[:200]
         db.kv_set(con, "youtube_cookies", {"text": cookies, "at": time.time()})
         retried = 0
-        for clip in db.by_status(con, "failed"):
-            if clip.platform == "youtube":
+        for clip in db.by_status(con, "failed"):   # only clips you chose - never ones you passed on
+            if clip.platform == "youtube" and pipeline.chosen(clip):
                 db.update(con, clip.id, status="queued", error="")
                 retried += 1
         say("YouTube sign-in added." + (f" Retrying {retried} YouTube clip{'s' * (retried != 1)}." if retried else ""))

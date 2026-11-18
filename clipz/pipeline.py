@@ -21,6 +21,22 @@ def discover(cfg: Config, con, log=print) -> int:
     return new
 
 
+def chosen(clip) -> bool:
+    """Did you pick this clip yourself (Save, Post, a format change)?"""
+    return bool(clip.picked or clip.approve or clip.autopost or clip.layout)
+
+
+def return_unpicked_youtube(con) -> int:
+    """Adding a YouTube sign-in used to retry every failed YouTube clip, including ones you
+    never chose, and they ended up in Saved. Send the ones still waiting back to the feed."""
+    moved = 0
+    for clip in db.by_status(con, "queued"):
+        if clip.platform == "youtube" and not chosen(clip):
+            db.update(con, clip.id, status="discovered", error="")
+            moved += 1
+    return moved
+
+
 def return_auto_edits(con) -> int:
     """Older versions edited the top finds automatically, which emptied the feed. Put any of
     those that never got edited back into the feed (clips you chose have approve/autopost set
@@ -55,7 +71,7 @@ def process(cfg: Config, con, clips, log=print) -> None:
             if not src or not src.exists():
                 cookies = (db.kv_get(con, "youtube_cookies") or {}).get("text", "") if clip.platform == "youtube" else ""
                 try:
-                    src = dl.download(clip, cfg.data_dir / "raw", cookies)
+                    src = dl.download(clip, cfg.data_dir / "raw", cookies, cfg.max_duration)
                 except Exception as e:
                     if clip.platform == "youtube" and "not a bot" in str(e):
                         raise RuntimeError("YouTube blocked the download. "

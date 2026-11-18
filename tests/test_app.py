@@ -300,7 +300,8 @@ def test_youtube_cookies_are_cleaned_checked_used_and_retry_failed_clips(env, mo
     monkeypatch.setattr(download, "stream_url", fake_stream)
     con = config.load(str(tmp / "config.toml")).connect()
     db.kv_set(con, "migrated:no_auto_edit", 1)   # production has long since done this one-off step
-    db.add(con, Clip(id="youtube:a", platform="youtube", creator="s", credit="s", title="t", url="u", status="failed"))
+    db.add(con, Clip(id="youtube:a", platform="youtube", creator="s", credit="s", title="t", url="u", status="failed", picked="1"))
+    db.add(con, Clip(id="youtube:never", platform="youtube", creator="s", credit="s", title="t", url="u", status="failed"))
     db.add(con, Clip(id="twitch:b", platform="twitch", creator="s", credit="s", title="t", url="u", status="failed"))
 
     r = post(client, "/api/connect/youtube-cookies", {"cookies": txt.replace("abc", "bad")})
@@ -311,9 +312,10 @@ def test_youtube_cookies_are_cleaned_checked_used_and_retry_failed_clips(env, mo
     assert state["accounts"]["ytcookies"] is True and "abc" not in json.dumps(state)
     assert db.get(con, "youtube:a").status != "failed"   # retried (the worker may already have picked it up)
     assert db.get(con, "twitch:b").status == "failed"
+    assert db.get(con, "youtube:never").status == "failed"      # never picked: not retried into Saved
 
     got = {}
-    monkeypatch.setattr(download, "download", lambda clip, d, cookies="": got.setdefault("c", cookies) and (_ for _ in ()).throw(RuntimeError("stop")))
+    monkeypatch.setattr(download, "download", lambda clip, d, cookies="", max_seconds=0: got.setdefault("c", cookies) and (_ for _ in ()).throw(RuntimeError("stop")))
     pipeline.process(config.load(str(tmp / "config.toml")), con, [db.get(con, "youtube:a")], log=lambda m: None)
     assert "SID\tabc" in got["c"]
     assert post(client, "/api/disconnect/ytcookies").status_code == 200
@@ -397,3 +399,37 @@ def test_paste_a_link_from_any_app_then_post_it(env, monkeypatch):
     saved = db.get(con, clip["id"])
     assert saved.layout == "hype" and saved.title == "THIS NPC 💀" and saved.autopost == "1"
     assert post(client, "/api/import", {"url": "https://www.tiktok.com/@gtaguy/video/123"}).status_code in (200, 400)
+
+
+def test_a_clip_that_keeps_dying_is_given_up_and_one_clip_is_edited_per_cloud_run(tmp_path, monkeypatch):
+    from clipz import worker
+    monkeypatch.chdir(tmp_path)
+    cfg = config.load(str(tmp_path / "config.toml"))
+    con = cfg.connect()
+    db.kv_set(con, "migrated:no_auto_edit", 1)
+    for i in (1, 2):
+        db.add(con, Clip(id=f"twitch:{i}", platform="twitch", creator="s", credit="s", title="t", url="u",
+                         status="queued", picked="1", score=10 - i))
+    # Two runs died part-way through twitch:1 (nothing cleared its try count).
+    db.kv_set(con, "edit_tries:twitch:1", 2)
+    edited = []
+    def fake_process(c, con_, clips, log=print):
+        edited.append(clips[0].id)
+        db.update(con_, clips[0].id, status="rendered")
+    monkeypatch.setattr(pipeline, "process", fake_process)
+    assert worker.run(cfg, lambda m: None, budget=120) == "more"      # gave up on twitch:1, edited twitch:2, stopped
+    assert db.get(con, "twitch:1").status == "failed" and "stopping part-way" in db.get(con, "twitch:1").error
+    assert edited == ["twitch:2"] and db.get(con, "twitch:2").status == "rendered"
+
+
+def test_retry_failed_only_requeues_clips_you_picked(env):
+    client, tmp = env
+    con = config.load(str(tmp / "config.toml")).connect()
+    db.kv_set(con, "migrated:no_auto_edit", 1)
+    db.add(con, Clip(id="twitch:mine", platform="twitch", creator="s", credit="s", title="t", url="u", status="failed", picked="1"))
+    db.add(con, Clip(id="twitch:auto", platform="twitch", creator="s", credit="s", title="t", url="u", status="failed"))
+    assert post(client, "/api/retry").status_code == 200
+    assert db.get(con, "twitch:mine").status != "failed"
+    assert db.get(con, "twitch:auto").status == "discovered"
+    assert post(client, "/api/clips/twitch:auto/save").status_code == 200
+    assert db.get(con, "twitch:auto").picked == "1"
