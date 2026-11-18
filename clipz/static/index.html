@@ -450,6 +450,7 @@ function buildFeed() {
     h("button", { className: "pill" + (feed.creator ? " set" : ""), on: { click: () => openFilter("creator") } }, (feed.creatorName || "Creator") + " ▾"),
     h("button", { className: "pill" + (feed.views || feed.viral ? " set" : ""), on: { click: () => openFilter("views") } },
       (feed.viral ? "🔥 Viral" : feed.views ? VIEW_NAMES[feed.views] : "Views") + " ▾"),
+    h("button", { className: "pill", title: "Paste a clip link", "aria-label": "Paste a clip link", on: { click: openImport } }, "🔗"),
     h("button", { className: "pill find", on: { click: () => api("POST", "/api/run").then(() => toast("Looking for new clips…")) } }, "Find clips")));
   updateFeedbar();
   feed.observer?.disconnect();
@@ -532,6 +533,29 @@ function dropReels(match, from) {
   else if (!feed.clips.length) box.append(emptyReel());
 }
 
+function openImport() {
+  const d = $("sheet");
+  const url = h("input", { type: "url", placeholder: "https://… (TikTok, Instagram, YouTube, X, Twitch, Kick)", autocomplete: "off" });
+  const note = h("div", { className: "muted", style: "font-size:13px" }, "Paste the share link of any public clip. Clipz credits whoever posted it.");
+  const go = h("button", { className: "primary", on: { click: async () => {
+    if (!url.value.trim()) return toast("Paste a link first");
+    go.disabled = true; go.textContent = "Looking it up…"; note.textContent = "This takes a few seconds.";
+    const r = await fetch("/api/import", { method: "POST", headers: { "Content-Type": "application/json", "X-Clipz": "1" },
+      body: JSON.stringify({ url: url.value }) });
+    const data = await r.json().catch(() => ({}));
+    go.disabled = false; go.textContent = "Next";
+    if (!r.ok) { note.textContent = data.error || "Couldn't read that link"; return; }
+    d.close();
+    openPost(data.clip);
+  } } }, "Next");
+  const paste = navigator.clipboard && navigator.clipboard.readText ? h("button", { on: { click: async () => {
+    try { url.value = (await navigator.clipboard.readText()).trim(); } catch { toast("Long-press the box and tap Paste"); }
+  } } }, "Paste from clipboard") : null;
+  d.replaceChildren(h("h3", { tabIndex: -1, autofocus: true }, "Post a clip from a link"),
+    h("label", { className: "field" }, "Clip link", url), note, paste, go);
+  d.showModal();
+}
+
 function trend(c) {
   const hours = Math.max((Date.now() - new Date(c.created_at).getTime()) / 3.6e6, 0.5);
   const perHour = (c.views || 0) / hours;
@@ -571,7 +595,7 @@ function openPost(c, el, saveOnly = false) {
     d.close();
     toast(action === "post" ? (connected.length ? `Editing - it'll post to ${connected.map(n => names[n]).join(", ")} when ready` : "Editing - it'll post once you connect an account")
                             : "Saved - find it on the Publishing tab");
-    dropReels(x => x.id === c.id, el);
+    if (el) dropReels(x => x.id === c.id, el);
   };
   d.replaceChildren(
     h("h3", { tabIndex: -1, autofocus: true }, saveOnly ? "Save for later" : "Post this clip"),

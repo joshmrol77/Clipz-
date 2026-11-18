@@ -89,6 +89,42 @@ def stream_url(url: str, max_height: int = 720, cookies: str = "") -> str:
     return max(formats, key=lambda f: ((f.get("height") or 0), f.get("tbr") or 0))["url"]
 
 
+LINK_PLATFORMS = {"youtube": "youtube", "youtubetab": "youtube", "twitch": "twitch", "kick": "kick",
+                  "tiktok": "tiktok", "instagram": "instagram", "twitter": "x", "x": "x", "reddit": "reddit"}
+
+
+def link_info(url: str, cookies: str = "") -> dict:
+    """What a pasted link points to, without downloading the video: a dict for a new Clip."""
+    opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}
+    with _cookie_file(cookies) as path, yt_dlp.YoutubeDL(_with_cookies(opts, path)) as ydl:
+        info = ydl.extract_info(url, download=False)
+    if info.get("_type") == "playlist":
+        entries = [e for e in info.get("entries") or [] if e]
+        if not entries:
+            raise RuntimeError("no video found at that link")
+        info = entries[0]
+    key = (info.get("extractor_key") or info.get("extractor") or "").lower().split(":")[0]
+    platform = next((v for k, v in LINK_PLATFORMS.items() if key.startswith(k)), key or "link")
+    if platform == "tiktok":
+        handle = info.get("uploader") or info.get("channel")
+    elif platform in ("x", "instagram"):
+        handle = info.get("uploader_id") or info.get("channel") or info.get("uploader")
+    else:
+        handle = info.get("uploader_id") or info.get("channel") or info.get("uploader") or info.get("creator")
+    handle = str(handle or "").lstrip("@") or "unknown"
+    title = (info.get("title") or info.get("description") or "").strip().split("\n")[0][:200]
+    if platform in ("x", "instagram", "tiktok") and title.lower().startswith(("video by", "post by")):
+        title = ""
+    created = ""
+    if info.get("timestamp"):
+        from datetime import datetime, timezone
+        created = datetime.fromtimestamp(info["timestamp"], timezone.utc).isoformat()
+    return {"id": f"link:{platform}:{info.get('id') or abs(hash(url))}", "platform": platform, "creator": handle,
+            "credit": "", "title": title, "url": info.get("webpage_url") or url,
+            "views": int(info.get("view_count") or 0), "created_at": created,
+            "duration": float(info.get("duration") or 0), "thumbnail": info.get("thumbnail") or ""}
+
+
 def fetch_video(url: str, dest_dir: Path, name: str, max_seconds: int = 180) -> Path:
     """Download the first `max_seconds` of any video link yt-dlp understands (or a direct
     .mp4 link) - used for gameplay backgrounds."""

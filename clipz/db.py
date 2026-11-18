@@ -129,7 +129,8 @@ def credit_line(clip: Clip) -> str:
     return f"{clip.credit} (clip via {clip.uploader})" if clip.uploader else clip.credit
 
 
-PLATFORM_NAMES = {"twitch": "Twitch", "kick": "Kick", "youtube": "YouTube"}
+PLATFORM_NAMES = {"twitch": "Twitch", "kick": "Kick", "youtube": "YouTube", "tiktok": "TikTok",
+                  "instagram": "Instagram", "x": "X", "reddit": "Reddit"}
 
 
 def credit_tag(clip: Clip) -> str:

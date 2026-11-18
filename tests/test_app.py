@@ -357,3 +357,43 @@ def test_captions_follow_the_page_rules_and_scoreboard_lists_posts(env):
     rows = r.get_data(as_text=True).strip().splitlines()
     assert rows[0].startswith("post_id,date,time,platform,pillar,format,hook,length_sec,credit,views_12h")
     assert len(rows) == 2 and "https://youtu.be/abc" in rows[1] and rows[1].endswith(",,,,,,,,,")
+
+
+def test_paste_a_link_from_any_app_then_post_it(env, monkeypatch):
+    from clipz import download
+    client, tmp = env
+
+    class FakeYDL:
+        infos = {"https://www.tiktok.com/@gtaguy/video/123": {
+            "id": "123", "extractor_key": "TikTok", "uploader": "gtaguy", "uploader_id": "6789",
+            "title": "this NPC reaction is insane #gta6", "view_count": 50000, "duration": 21.5,
+            "timestamp": 1795000000, "webpage_url": "https://www.tiktok.com/@gtaguy/video/123", "thumbnail": "t.jpg"},
+            "https://x.com/someone/status/9": {"id": "9", "extractor_key": "Twitter", "uploader": "Some One",
+            "uploader_id": "someone", "title": "Some One - lol", "duration": 12}}
+        def __init__(self, opts): self.opts = opts
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def extract_info(self, url, download=False):
+            if url not in self.infos:
+                raise RuntimeError("ERROR: Unsupported URL: " + url)
+            return self.infos[url]
+    monkeypatch.setattr(download.yt_dlp, "YoutubeDL", FakeYDL)
+
+    r = post(client, "/api/import", {"url": "look at this https://www.tiktok.com/@gtaguy/video/123 lol"})
+    assert r.status_code == 200, r.get_json()
+    clip = r.get_json()["clip"]
+    assert clip["id"] == "link:tiktok:123" and clip["creator"] == "gtaguy" and clip["views"] == 50000
+    con = config.load(str(tmp / "config.toml")).connect()
+    assert db.credit_tag(db.get(con, clip["id"])) == "🎥 @gtaguy on TikTok"
+    x = post(client, "/api/import", {"url": "https://x.com/someone/status/9"}).get_json()["clip"]
+    assert x["platform"] == "x" and x["creator"] == "someone"
+
+    assert post(client, "/api/import", {"url": "https://example.com/nope"}).status_code == 400
+    assert post(client, "/api/import", {"url": "not a link"}).status_code == 400
+
+    monkeypatch.setattr("clipz.app.worker.request_publish", lambda c: None, raising=False)
+    r = post(client, f"/api/clips/{clip['id']}/post", {"layout": "hype", "title": "THIS NPC 💀"})
+    assert r.status_code == 200
+    saved = db.get(con, clip["id"])
+    assert saved.layout == "hype" and saved.title == "THIS NPC 💀" and saved.autopost == "1"
+    assert post(client, "/api/import", {"url": "https://www.tiktok.com/@gtaguy/video/123"}).status_code in (200, 400)

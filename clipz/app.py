@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import os
 import secrets
 import threading
@@ -630,6 +631,40 @@ def create_app(config_path: str = "config.toml", port: int = 8777, password: str
             return jsonify(error=f"clip is {clip.status}"), 400
         start_worker()
         return jsonify(ok=True, accounts=publish.connected(c))
+
+    @app.post("/api/import")
+    def import_link():
+        """A clip link pasted from any app: look it up and add it, ready to pick a format and post."""
+        url = (request.get_json().get("url") or "").strip()
+        match = re.search(r"https?://\S+", url)
+        if not match:
+            return jsonify(error="Paste a link that starts with https://"), 400
+        url = match.group(0)
+        c = cfg()
+        con = c.connect()
+        cookies = (db.kv_get(con, "youtube_cookies") or {}).get("text", "") if re.search(r"youtu\.?be", url) else ""
+        try:
+            data = download.link_info(url, cookies)
+        except Exception as e:
+            msg = str(e)
+            if "login" in msg.lower() or "log in" in msg.lower() or "private" in msg.lower():
+                msg = "That post needs a login to view, so Clipz can't get it. Try a public post."
+            elif "not a bot" in msg:
+                msg = "YouTube blocked the lookup - add a YouTube sign-in in Settings."
+            elif "Unsupported URL" in msg:
+                msg = "Clipz can't read videos from that link."
+            return jsonify(error=msg[:300]), 400
+        existing = db.get(con, data["id"])
+        if existing and existing.status not in ("discovered", "skipped", "failed"):
+            return jsonify(error=f"You already have this clip (it's {existing.status}) - see the Publishing tab."), 400
+        clip = db.Clip(**data, status="discovered", seen="1", language="en")
+        clip.credit = db.credit_tag(clip).removeprefix("🎥 ")
+        if existing:
+            db.update(con, clip.id, status="discovered", error="")
+        else:
+            db.add(con, clip)
+        say(f"Imported {clip.platform} clip from @{clip.creator}: {clip.title or clip.url}")
+        return jsonify(ok=True, clip=asdict(db.get(con, clip.id)))
 
     @app.post("/api/clips/<clip:clip_id>/keep")
     def keep_clip(clip_id):
